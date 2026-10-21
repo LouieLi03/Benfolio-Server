@@ -1,0 +1,52 @@
+name: benfolio
+
+services:
+  server:
+    build:
+      context: ..
+      args:
+        VERSION: ${BENFOLIO_VERSION:-dev}
+    image: benfolio-server:local
+    restart: unless-stopped
+    init: true
+    user: "${BENFOLIO_UID:-10001}:${BENFOLIO_GID:-10001}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      BENFOLIO_LISTEN_ADDR: ":8080"
+      BENFOLIO_DATA_DIR: /data
+      BENFOLIO_BOOKS_DIR: /books
+      BENFOLIO_API_KEY_FILE: /run/secrets/server_api_key
+    ports:
+      - "${BENFOLIO_BIND_ADDRESS:-127.0.0.1}:${BENFOLIO_PORT:-8080}:8080"
+    volumes:
+      - type: bind
+        source: ${BENFOLIO_STATE_DIR:?请在.env中设置状态目录}
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${BENFOLIO_BOOKS_PATH:?请在.env中设置书籍目录}
+        target: /books
+        read_only: true
+        bind:
+          create_host_path: false
+    secrets:
+      - server_api_key
+    healthcheck:
+      test: [CMD, /benfolio-server, healthcheck]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+secrets:
+  server_api_key:
+    file: ${BENFOLIO_API_KEY_PATH:?请在.env中设置API Key文件路径}

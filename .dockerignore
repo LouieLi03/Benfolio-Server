@@ -1,0 +1,10 @@
+.git
+.local
+.env
+.env.*
+*.sqlite*
+bin
+secrets
+*.md
+docs
+notes

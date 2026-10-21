@@ -1,0 +1,24 @@
+package domain
+
+import "context"
+
+type BookQuery struct {
+	Query  string
+	Format Format
+	Limit  int
+	Offset int
+}
+
+type BookPage struct {
+	Items   []Book `json:"items"`
+	Limit   int    `json:"limit"`
+	Offset  int    `json:"offset"`
+	HasMore bool   `json:"hasMore"`
+}
+
+// Only catalog reads are wired in the scaffold. Sync writes must not be added
+// through this interface without user identity and revision preconditions.
+type Catalog interface {
+	Libraries(context.Context) ([]Library, error)
+	Books(context.Context, BookQuery) (BookPage, error)
+}
