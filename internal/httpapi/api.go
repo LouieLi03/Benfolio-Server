@@ -16,8 +16,12 @@ import (
 
 type API struct {
 	Catalog          domain.Catalog
+	Sources          domain.SourceBrowser
+	Scans            domain.ScanService
+	Imports          domain.BookImporter
 	Owner            domain.User
 	InstanceID       string
+	ServerName       string
 	SchemaVersion    int
 	BuildVersion     string
 	SourceConfigured bool
@@ -34,10 +38,14 @@ func (a API) Handler() http.Handler {
 	})
 	api.HandleFunc("GET /api/v1/capabilities", a.capabilities)
 	api.HandleFunc("GET /api/v1/libraries", a.libraries)
+	api.HandleFunc("GET /api/v1/libraries/{libraryID}/source-files", a.sourceFiles)
+	api.HandleFunc("POST /api/v1/libraries/{libraryID}/scan", a.startScan)
+	api.HandleFunc("POST /api/v1/libraries/{libraryID}/imports", a.importEPUB)
+	api.HandleFunc("GET /api/v1/tasks/{taskID}", a.scanTask)
 	api.HandleFunc("GET /api/v1/books", a.books)
 	// Reserved routes deliberately fail instead of returning fake upload success.
 	for _, pattern := range []string{
-		"POST /api/v1/libraries", "POST /api/v1/libraries/{libraryID}/scan",
+		"POST /api/v1/libraries",
 		"GET /api/v1/books/{bookID}", "GET /api/v1/books/{bookID}/versions",
 		"GET /api/v1/versions/{versionID}/file",
 		"GET /api/v1/versions/{versionID}/progress", "PUT /api/v1/versions/{versionID}/progress",
@@ -101,7 +109,7 @@ func (a API) recoverRequests(next http.Handler) http.Handler {
 
 func (a API) serverInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id": a.InstanceID, "name": "Benfolio", "version": a.BuildVersion,
+		"id": a.InstanceID, "name": a.ServerName, "version": a.BuildVersion,
 		"protocolVersion": 1, "schemaVersion": a.SchemaVersion, "stage": "scaffold",
 		"sourceConfigured": a.SourceConfigured,
 	})
@@ -112,7 +120,12 @@ func (a API) capabilities(w http.ResponseWriter, r *http.Request) {
 		"protocolVersion": 1,
 		"available": map[string]bool{
 			"serverIdentity": true, "singleOwnerAPIKey": true, "catalogRead": true,
-			"libraryManagement": false, "scan": false, "download": false,
+			"librarySourceConfiguration": true,
+			"sourceDiscovery":            a.Sources != nil,
+			"sourceScanTasks":            a.Scans != nil,
+			"epubImport":                 a.Imports != nil,
+			"epubScanImport":             a.Scans != nil && a.Imports != nil,
+			"libraryManagement":          false, "scan": false, "download": false,
 			"progressSync": false, "annotationSync": false, "resourceTransfer": false,
 			"pdfWorkingCopy": false, "pdfExport": false, "epubAnnotationExport": false,
 			"backupRestore": false, "webReader": false, "multiUser": false,

@@ -19,10 +19,11 @@ import (
 var migrations embed.FS
 
 type Store struct {
-	db            *sql.DB
-	InstanceID    string
-	Owner         domain.User
-	SchemaVersion int
+	db              *sql.DB
+	InstanceID      string
+	Owner           domain.User
+	SchemaVersion   int
+	SourceLibraryID string
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {

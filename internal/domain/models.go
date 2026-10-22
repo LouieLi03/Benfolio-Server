@@ -23,18 +23,20 @@ type User struct {
 }
 
 type Library struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	CreatedAt        time.Time `json:"createdAt"`
+	SourceConfigured bool      `json:"sourceConfigured"`
 }
 
 type Book struct {
-	ID        string    `json:"id"`
-	LibraryID string    `json:"libraryID"`
-	Title     string    `json:"title"`
-	Authors   []string  `json:"authors"`
-	Format    Format    `json:"format"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID               string    `json:"id"`
+	LibraryID        string    `json:"libraryID"`
+	CurrentVersionID string    `json:"currentVersionID,omitempty"`
+	Title            string    `json:"title"`
+	Authors          []string  `json:"authors"`
+	Format           Format    `json:"format"`
+	CreatedAt        time.Time `json:"createdAt"`
 }
 
 // DocumentVersion identifies immutable source bytes, not the annotated PDF.

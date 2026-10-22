@@ -14,6 +14,8 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     environment:
+      BENFOLIO_SERVER_NAME: "${BENFOLIO_SERVER_NAME:-Benfolio}"
+      BENFOLIO_LIBRARY_NAME: "${BENFOLIO_LIBRARY_NAME:-书库}"
       BENFOLIO_LISTEN_ADDR: ":8080"
       BENFOLIO_DATA_DIR: /data
       BENFOLIO_BOOKS_DIR: /books

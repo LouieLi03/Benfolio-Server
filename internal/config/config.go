@@ -11,10 +11,19 @@ import (
 )
 
 type Config struct {
+	ServerName    string
 	ListenAddress string
 	DataDir       string
 	BooksDir      string
+	LibraryName   string
 	APIKey        string
+}
+
+func ServerName() string {
+	if value := strings.TrimSpace(os.Getenv("BENFOLIO_SERVER_NAME")); value != "" {
+		return value
+	}
+	return "Benfolio"
 }
 
 func ListenAddress() string {
@@ -25,7 +34,16 @@ func ListenAddress() string {
 }
 
 func Load() (Config, error) {
-	cfg := Config{ListenAddress: ListenAddress(), DataDir: os.Getenv("BENFOLIO_DATA_DIR"), BooksDir: os.Getenv("BENFOLIO_BOOKS_DIR")}
+	cfg := Config{
+		ServerName:    ServerName(),
+		ListenAddress: ListenAddress(),
+		DataDir:       os.Getenv("BENFOLIO_DATA_DIR"),
+		BooksDir:      os.Getenv("BENFOLIO_BOOKS_DIR"),
+		LibraryName:   strings.TrimSpace(os.Getenv("BENFOLIO_LIBRARY_NAME")),
+	}
+	if cfg.LibraryName == "" {
+		cfg.LibraryName = "书库"
+	}
 	_, port, err := net.SplitHostPort(cfg.ListenAddress)
 	if err != nil {
 		return Config{}, errors.New("BENFOLIO_LISTEN_ADDR 必须为 host:port")
@@ -49,6 +67,10 @@ func Load() (Config, error) {
 		// The source is never created or modified by the scaffold.
 		if contains(cfg.DataDir, cfg.BooksDir) || contains(cfg.BooksDir, cfg.DataDir) {
 			return Config{}, errors.New("状态目录与书籍来源目录不能互相包含")
+		}
+		cfg.BooksDir, err = readableSourceDirectory(cfg.BooksDir, cfg.DataDir)
+		if err != nil {
+			return Config{}, err
 		}
 	}
 	key, keyFile := os.Getenv("BENFOLIO_API_KEY"), os.Getenv("BENFOLIO_API_KEY_FILE")

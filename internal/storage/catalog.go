@@ -28,6 +28,7 @@ func (s *Store) Libraries(ctx context.Context) ([]domain.Library, error) {
 		if err != nil {
 			return nil, err
 		}
+		item.SourceConfigured = item.ID == s.SourceLibraryID
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -37,9 +38,10 @@ func (s *Store) Books(ctx context.Context, query domain.BookQuery) (domain.BookP
 	if query.Limit < 1 || query.Limit > 100 || query.Offset < 0 || query.Offset > 1_000_000 {
 		return domain.BookPage{}, errors.New("书库分页参数越界")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, library_id, title, authors_json, format, created_at
-		FROM books WHERE (? = '' OR instr(lower(title), lower(?)) > 0)
-		AND (? = '' OR format = ?) ORDER BY id LIMIT ? OFFSET ?`,
+	rows, err := s.db.QueryContext(ctx, `SELECT b.id, b.library_id, COALESCE(src.current_version_id, ''), b.title, b.authors_json, b.format, b.created_at
+		FROM books AS b LEFT JOIN book_sources AS src ON src.book_id = b.id
+		WHERE (? = '' OR instr(lower(b.title), lower(?)) > 0)
+		AND (? = '' OR b.format = ?) ORDER BY b.id LIMIT ? OFFSET ?`,
 		query.Query, query.Query, query.Format, query.Format, query.Limit+1, query.Offset)
 	if err != nil {
 		return domain.BookPage{}, err
@@ -49,7 +51,7 @@ func (s *Store) Books(ctx context.Context, query domain.BookQuery) (domain.BookP
 	for rows.Next() {
 		var item domain.Book
 		var authors, created string
-		if err := rows.Scan(&item.ID, &item.LibraryID, &item.Title, &authors, &item.Format, &created); err != nil {
+		if err := rows.Scan(&item.ID, &item.LibraryID, &item.CurrentVersionID, &item.Title, &authors, &item.Format, &created); err != nil {
 			return domain.BookPage{}, err
 		}
 		if err := json.Unmarshal([]byte(authors), &item.Authors); err != nil {
