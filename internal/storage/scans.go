@@ -33,7 +33,7 @@ func scanTaskRow(row *sql.Row) (domain.ScanTask, error) {
 	if err := json.Unmarshal([]byte(payload), &request); err != nil {
 		return domain.ScanTask{}, err
 	}
-	if request.Stage != domain.ScanDiscovery && request.Stage != domain.ScanEPUBImport {
+	if !domain.IsScanStage(request.Stage) {
 		return domain.ScanTask{}, errors.New("不支持的扫描任务阶段")
 	}
 	item.Stage = request.Stage
@@ -80,7 +80,7 @@ func (s *Store) ScanTask(ctx context.Context, ownerID, taskID string) (domain.Sc
 }
 
 func (s *Store) EnqueueScan(ctx context.Context, ownerID, libraryID, stage string) (domain.ScanTask, bool, error) {
-	if stage != domain.ScanDiscovery && stage != domain.ScanEPUBImport {
+	if !domain.IsScanStage(stage) {
 		return domain.ScanTask{}, false, domain.ErrInvalidScanStage
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -112,7 +112,7 @@ func (s *Store) EnqueueScan(ctx context.Context, ownerID, libraryID, stage strin
 	}
 	created := timestamp()
 	var summary any
-	if stage == domain.ScanEPUBImport {
+	if domain.IsImportScan(stage) {
 		summary, err = scanSummaryJSON(&domain.ScanImportSummary{Failures: []domain.ScanFileFailure{}}, 0)
 		if err != nil {
 			return domain.ScanTask{}, false, err
@@ -165,17 +165,23 @@ func (s *Store) ClaimScan(ctx context.Context, ownerID string) (*domain.ScanTask
 }
 
 func (s *Store) RecordScanProgress(ctx context.Context, ownerID, taskID string, progress domain.ScanProgress) error {
+	if err := checkScanSummaryStage(progress.Stage, progress.Import); err != nil {
+		return err
+	}
 	summary, err := scanSummaryJSON(progress.Import, progress.CandidateFiles)
 	if err != nil {
 		return err
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE tasks SET candidate_files = ?, import_summary_json = ?, updated_at = ?
         WHERE id = ? AND user_id = ? AND kind = 'source_scan' AND state = 'running' AND candidate_files <= ?
-        AND json_extract(payload_json, '$.stage') = ?`, progress.CandidateFiles, summary, timestamp(), taskID, ownerID, progress.CandidateFiles, summaryStage(progress.Import))
+        AND json_extract(payload_json, '$.stage') = ?`, progress.CandidateFiles, summary, timestamp(), taskID, ownerID, progress.CandidateFiles, progress.Stage)
 	return requireTaskChange(result, err)
 }
 
-func (s *Store) FinishScan(ctx context.Context, ownerID, taskID string, report domain.SourceDiscovery, imported *domain.ScanImportSummary, failure *domain.TaskFailure) error {
+func (s *Store) FinishScan(ctx context.Context, ownerID string, task domain.ScanTask, report domain.SourceDiscovery, imported *domain.ScanImportSummary, failure *domain.TaskFailure) error {
+	if err := checkScanSummaryStage(task.Stage, imported); err != nil {
+		return err
+	}
 	if failure == nil && (!report.Complete || (imported != nil && (imported.FailedFiles > 0 || imported.ProcessedFiles != report.CandidateFiles))) {
 		return errors.New("未完整处理的扫描不能记为成功")
 	}
@@ -197,15 +203,15 @@ func (s *Store) FinishScan(ctx context.Context, ownerID, taskID string, report d
         result_json = ?, import_summary_json = ?, error_code = ?, error_message = ?, finished_at = ?, updated_at = ?
         WHERE id = ? AND user_id = ? AND kind = 'source_scan' AND state = 'running'
         AND json_extract(payload_json, '$.stage') = ?`,
-		state, report.CandidateFiles, string(resultJSON), summary, code, message, finished, finished, taskID, ownerID, summaryStage(imported))
+		state, report.CandidateFiles, string(resultJSON), summary, code, message, finished, finished, task.ID, ownerID, task.Stage)
 	return requireTaskChange(result, err)
 }
 
-func summaryStage(summary *domain.ScanImportSummary) string {
-	if summary == nil {
-		return domain.ScanDiscovery
+func checkScanSummaryStage(stage string, summary *domain.ScanImportSummary) error {
+	if !domain.IsScanStage(stage) || domain.IsImportScan(stage) != (summary != nil) {
+		return domain.ErrInvalidScanStage
 	}
-	return domain.ScanEPUBImport
+	return nil
 }
 
 func scanSummaryJSON(summary *domain.ScanImportSummary, candidates int) (any, error) {

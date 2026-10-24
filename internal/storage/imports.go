@@ -15,16 +15,19 @@ import (
 
 var _ domain.ImportStore = (*Store)(nil)
 
-// SaveEPUB binds a source path to a logical book. Byte versions and their
+// SaveBook binds a source path to a logical book. Byte versions and their
 // metadata remain immutable; returning to old bytes reuses the old version.
-func (s *Store) SaveEPUB(ctx context.Context, record domain.ImportRecord) (domain.ImportResult, error) {
+func (s *Store) SaveBook(ctx context.Context, record domain.ImportRecord) (domain.ImportResult, error) {
 	var result domain.ImportResult
 	if record.LibraryID == "" || record.LibraryID != s.SourceLibraryID {
 		return result, domain.ErrSourceNotConfigured
 	}
 	digest, err := hex.DecodeString(record.SHA256)
-	if err != nil || len(digest) != 32 || record.SHA256 != strings.ToLower(record.SHA256) || record.ByteSize <= 0 || record.ObjectKey != record.SHA256[:2]+"/"+record.SHA256+".epub" || !fs.ValidPath(record.RelativePath) || record.RelativePath == "." || strings.ContainsAny(record.RelativePath, "\\\x00") || record.Metadata.Title == "" {
+	if err != nil || len(digest) != 32 || record.SHA256 != strings.ToLower(record.SHA256) || record.ByteSize <= 0 || (record.Format != domain.EPUB && record.Format != domain.PDF) || record.ObjectKey != record.SHA256[:2]+"/"+record.SHA256+"."+string(record.Format) || !fs.ValidPath(record.RelativePath) || record.RelativePath == "." || strings.ContainsAny(record.RelativePath, "\\\x00") || record.Metadata.Title == "" {
 		return result, errors.New("导入记录无效")
+	}
+	if record.Format == domain.PDF && (record.Metadata.PDF == nil || record.Metadata.PDF.PageCount < 1) {
+		return result, errors.New("PDF 元数据缺少有效页数")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -41,13 +44,13 @@ func (s *Store) SaveEPUB(ctx context.Context, record domain.ImportRecord) (domai
 		if err != nil {
 			return result, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO books(id, library_id, title, authors_json, format, created_at) VALUES (?, ?, ?, '[]', 'epub', ?)`, result.BookID, record.LibraryID, record.Metadata.Title, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO books(id, library_id, title, authors_json, format, created_at) VALUES (?, ?, ?, '[]', ?, ?)`, result.BookID, record.LibraryID, record.Metadata.Title, record.Format, now); err != nil {
 			return result, err
 		}
 		result.BookCreated = true
 	case err != nil:
 		return result, err
-	case format != domain.EPUB:
+	case format != record.Format:
 		return result, domain.ErrUnsupportedBook
 	}
 	var created, objectKey, metadataJSON string

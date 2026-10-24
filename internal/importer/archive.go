@@ -16,11 +16,11 @@ import (
 // A complete, synced snapshot becomes visible before the database references
 // it. Hard linking is atomic and never replaces an existing object. A failed
 // database commit may leave an unreferenced original; it is never auto-deleted.
-func (s *Service) publishOriginal(ctx context.Context, tempPath, digest string, size int64) (string, error) {
+func (s *Service) publishOriginal(ctx context.Context, tempPath, digest string, size int64, format domain.Format) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	key := path.Join(digest[:2], digest+".epub")
+	key := path.Join(digest[:2], digest+"."+string(format))
 	directory := filepath.Join(s.originals, digest[:2])
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", err

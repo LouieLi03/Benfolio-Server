@@ -27,13 +27,14 @@ func New(store domain.ImportStore, sources domain.SourceReader, staging, origina
 	return &Service{store: store, sources: sources, staging: staging, originals: originals}
 }
 
-func (s *Service) ImportEPUB(ctx context.Context, libraryID, relative string) (domain.ImportResult, error) {
-	return s.ImportEPUBFrom(ctx, s.sources, libraryID, relative)
+func (s *Service) ImportBook(ctx context.Context, libraryID, relative string) (domain.ImportResult, error) {
+	return s.ImportBookFrom(ctx, s.sources, libraryID, relative)
 }
 
 // The scan supplies a scoped reader while already holding source access.
-func (s *Service) ImportEPUBFrom(ctx context.Context, reader domain.SourceReader, libraryID, relative string) (domain.ImportResult, error) {
-	if strings.ToLower(path.Ext(relative)) != ".epub" {
+func (s *Service) ImportBookFrom(ctx context.Context, reader domain.SourceReader, libraryID, relative string) (domain.ImportResult, error) {
+	format := domain.Format(strings.TrimPrefix(strings.ToLower(path.Ext(relative)), "."))
+	if format != domain.EPUB && format != domain.PDF {
 		return domain.ImportResult{}, domain.ErrUnsupportedBook
 	}
 	source, err := reader.OpenContent(ctx, libraryID, relative)
@@ -42,10 +43,14 @@ func (s *Service) ImportEPUBFrom(ctx context.Context, reader domain.SourceReader
 	}
 	defer source.Close()
 	size := source.Info().Size()
-	if size <= 0 || size > publication.MaxEPUBBytes {
+	limit := publication.MaxEPUBBytes
+	if format == domain.PDF {
+		limit = publication.MaxPDFBytes
+	}
+	if size <= 0 || size > limit {
 		return domain.ImportResult{}, domain.ErrImportSize
 	}
-	temp, err := os.CreateTemp(s.staging, "epub-import-*")
+	temp, err := os.CreateTemp(s.staging, "book-import-*")
 	if err != nil {
 		return domain.ImportResult{}, err
 	}
@@ -62,7 +67,12 @@ func (s *Service) ImportEPUBFrom(ctx context.Context, reader domain.SourceReader
 	if err := source.VerifyUnchanged(); err != nil {
 		return domain.ImportResult{}, err
 	}
-	metadata, err := publication.ReadEPUB(ctx, temp, size)
+	var metadata domain.BookMetadata
+	if format == domain.EPUB {
+		metadata, err = publication.ReadEPUB(ctx, temp, size)
+	} else {
+		metadata, err = publication.ReadPDF(ctx, temp, size, strings.TrimSuffix(path.Base(relative), path.Ext(relative)))
+	}
 	if err != nil {
 		return domain.ImportResult{}, err
 	}
@@ -76,7 +86,7 @@ func (s *Service) ImportEPUBFrom(ctx context.Context, reader domain.SourceReader
 	if err := temp.Close(); err != nil {
 		return domain.ImportResult{}, err
 	}
-	key, err := s.publishOriginal(ctx, temp.Name(), digest, size)
+	key, err := s.publishOriginal(ctx, temp.Name(), digest, size, format)
 	if err != nil {
 		return domain.ImportResult{}, err
 	}
@@ -86,8 +96,8 @@ func (s *Service) ImportEPUBFrom(ctx context.Context, reader domain.SourceReader
 	if err := source.VerifyUnchanged(); err != nil {
 		return domain.ImportResult{}, err
 	}
-	return s.store.SaveEPUB(ctx, domain.ImportRecord{LibraryID: libraryID, RelativePath: relative,
-		SHA256: digest, ByteSize: size, ObjectKey: key, Metadata: metadata})
+	return s.store.SaveBook(ctx, domain.ImportRecord{LibraryID: libraryID, RelativePath: relative,
+		SHA256: digest, ByteSize: size, ObjectKey: key, Format: format, Metadata: metadata})
 }
 
 type contextReader struct {

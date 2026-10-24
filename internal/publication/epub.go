@@ -59,84 +59,84 @@ type packageDocument struct {
 	} `xml:"http://www.idpf.org/2007/opf spine"`
 }
 
-func ReadEPUB(ctx context.Context, data io.ReaderAt, size int64) (domain.EPUBMetadata, error) {
+func ReadEPUB(ctx context.Context, data io.ReaderAt, size int64) (domain.BookMetadata, error) {
 	if size <= 0 || size > MaxEPUBBytes {
-		return domain.EPUBMetadata{}, domain.ErrImportSize
+		return domain.BookMetadata{}, domain.ErrImportSize
 	}
 	if err := ctx.Err(); err != nil {
-		return domain.EPUBMetadata{}, err
+		return domain.BookMetadata{}, err
 	}
 	count, err := boundedDirectory(data, size)
 	if err != nil {
-		return domain.EPUBMetadata{}, err
+		return domain.BookMetadata{}, err
 	}
 	z, err := zip.NewReader(data, size)
 	if err != nil || len(z.File) != count {
-		return domain.EPUBMetadata{}, domain.ErrInvalidEPUB
+		return domain.BookMetadata{}, domain.ErrInvalidEPUB
 	}
 	files := make(map[string]*zip.File, len(z.File))
 	for _, f := range z.File {
 		name := strings.TrimSuffix(f.Name, "/")
 		if !utf8.ValidString(name) || !fs.ValidPath(name) || name == "." || strings.ContainsAny(name, "\\\x00") || files[name] != nil {
-			return domain.EPUBMetadata{}, domain.ErrInvalidEPUB
+			return domain.BookMetadata{}, domain.ErrInvalidEPUB
 		}
 		files[name] = f
 	}
 	mimetype := files["mimetype"]
 	if mimetype == nil || mimetype.Method != zip.Store {
-		return domain.EPUBMetadata{}, domain.ErrInvalidEPUB
+		return domain.BookMetadata{}, domain.ErrInvalidEPUB
 	}
 	value, err := readMember(ctx, mimetype, 20)
 	if err != nil {
-		return domain.EPUBMetadata{}, err
+		return domain.BookMetadata{}, err
 	}
 	if string(value) != "application/epub+zip" {
-		return domain.EPUBMetadata{}, domain.ErrInvalidEPUB
+		return domain.BookMetadata{}, domain.ErrInvalidEPUB
 	}
 	containerBytes, err := readMember(ctx, files["META-INF/container.xml"], 1<<20)
 	if err != nil {
-		return domain.EPUBMetadata{}, err
+		return domain.BookMetadata{}, err
 	}
 	var container containerDocument
 	if err := decodeXML(ctx, containerBytes, &container); err != nil {
-		return domain.EPUBMetadata{}, err
+		return domain.BookMetadata{}, err
 	}
 	var packagePath string
 	for _, item := range container.Rootfiles.Items {
 		if item.MediaType == "application/oebps-package+xml" {
 			packagePath, err = memberPath(".", item.Path)
 			if err != nil {
-				return domain.EPUBMetadata{}, err
+				return domain.BookMetadata{}, err
 			}
 			break
 		}
 	}
 	opfBytes, err := readMember(ctx, files[packagePath], maxXMLBytes)
 	if err != nil {
-		return domain.EPUBMetadata{}, err
+		return domain.BookMetadata{}, err
 	}
 	var pkg packageDocument
 	if err := decodeXML(ctx, opfBytes, &pkg); err != nil {
-		return domain.EPUBMetadata{}, err
+		return domain.BookMetadata{}, err
 	}
 	if pkg.XMLName.Space != opfNS || (pkg.Version != "2.0" && pkg.Version != "3.0") {
-		return domain.EPUBMetadata{}, domain.ErrInvalidEPUB
+		return domain.BookMetadata{}, domain.ErrInvalidEPUB
 	}
 	titles, err := metadataValues(pkg.Metadata.Titles, 64)
 	if err != nil || len(titles) == 0 {
-		return domain.EPUBMetadata{}, domain.ErrInvalidEPUB
+		return domain.BookMetadata{}, domain.ErrInvalidEPUB
 	}
 	authors, err := metadataValues(pkg.Metadata.Creators, 64)
 	if err != nil {
-		return domain.EPUBMetadata{}, err
+		return domain.BookMetadata{}, err
 	}
 	identifiers, err := metadataValues(pkg.Metadata.Identifiers, 64)
 	if err != nil {
-		return domain.EPUBMetadata{}, err
+		return domain.BookMetadata{}, err
 	}
 	languages, err := metadataValues(pkg.Metadata.Languages, 64)
 	if err != nil {
-		return domain.EPUBMetadata{}, err
+		return domain.BookMetadata{}, err
 	}
 	language := ""
 	if len(languages) > 0 {
@@ -148,24 +148,24 @@ func ReadEPUB(ctx context.Context, data io.ReaderAt, size int64) (domain.EPUBMet
 	for _, item := range pkg.Manifest.Items {
 		_, duplicate := items[item.ID]
 		if item.ID == "" || item.Href == "" || duplicate {
-			return domain.EPUBMetadata{}, domain.ErrInvalidEPUB
+			return domain.BookMetadata{}, domain.ErrInvalidEPUB
 		}
 		items[item.ID] = item.Href
 	}
 	if len(pkg.Spine.Items) == 0 {
-		return domain.EPUBMetadata{}, domain.ErrInvalidEPUB
+		return domain.BookMetadata{}, domain.ErrInvalidEPUB
 	}
 	for _, item := range pkg.Spine.Items {
 		name, err := memberPath(path.Dir(packagePath), items[item.IDRef])
 		if err != nil {
-			return domain.EPUBMetadata{}, err
+			return domain.BookMetadata{}, err
 		}
 		f := files[name]
 		if f == nil || !f.Mode().IsRegular() {
-			return domain.EPUBMetadata{}, domain.ErrInvalidEPUB
+			return domain.BookMetadata{}, domain.ErrInvalidEPUB
 		}
 	}
-	return domain.EPUBMetadata{Title: titles[0], Authors: authors, Language: language,
+	return domain.BookMetadata{Title: titles[0], Authors: authors, Language: language,
 		Identifiers: identifiers, PackageVersion: pkg.Version,
 		HasEncryptionDescriptor: files["META-INF/encryption.xml"] != nil}, nil
 }

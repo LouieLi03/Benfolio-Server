@@ -76,7 +76,7 @@ func (a API) scanTask(w http.ResponseWriter, r *http.Request) {
 func (a API) scanError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrInvalidScanStage):
-		writeError(w, http.StatusBadRequest, "invalid_scan_stage", "stage 必须为 discovery 或 epub_import。")
+		writeError(w, http.StatusBadRequest, "invalid_scan_stage", "stage 必须为 discovery、epub_import、pdf_import 或 book_import。")
 	case errors.Is(err, domain.ErrScanStageBusy):
 		writeError(w, http.StatusConflict, "scan_stage_busy", "此书库已有其他阶段的扫描，请待任务结束后重试。")
 	case errors.Is(err, domain.ErrLibraryNotFound):

@@ -21,4 +21,7 @@ type BookPage struct {
 type Catalog interface {
 	Libraries(context.Context) ([]Library, error)
 	Books(context.Context, BookQuery) (BookPage, error)
+	Book(context.Context, string) (Book, error)
+	Versions(context.Context, string, VersionQuery) (VersionPage, error)
+	Version(context.Context, string) (VersionDetails, error)
 }

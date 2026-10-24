@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/LouieLi03/Benfolio-Server/internal/domain"
+	"github.com/LouieLi03/Benfolio-Server/internal/localfile"
 )
 
 var _ domain.SourceReader = (*Browser)(nil)
@@ -44,7 +45,7 @@ func (b *Browser) openContent(ctx context.Context, libraryID, relative string, r
 		release()
 		return nil, err
 	}
-	f, err := openRegularSource(parent, name)
+	f, err := localfile.OpenRegular(parent, name)
 	if err != nil {
 		if owned {
 			_ = parent.Close()

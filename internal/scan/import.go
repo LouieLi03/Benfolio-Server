@@ -8,21 +8,21 @@ import (
 	"github.com/LouieLi03/Benfolio-Server/internal/domain"
 )
 
-func (r *Runner) importCandidate(ctx context.Context, libraryID string, file domain.SourceFile, reader domain.SourceReader, summary *domain.ScanImportSummary) error {
+func (r *Runner) importCandidate(ctx context.Context, libraryID, stage string, file domain.SourceFile, reader domain.SourceReader, summary *domain.ScanImportSummary) error {
 	if r.importer == nil {
 		return domain.ErrScanUnavailable
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if file.Format != domain.EPUB {
+	if !domain.ScanAcceptsFormat(stage, file.Format) {
 		summary.SkippedFiles++
 		summary.ProcessedFiles++
 		return nil
 	}
 	fileCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	result, err := r.importer.ImportEPUBFrom(fileCtx, reader, libraryID, file.RelativePath)
+	result, err := r.importer.ImportBookFrom(fileCtx, reader, libraryID, file.RelativePath)
 	if err == nil {
 		summary.ProcessedFiles++
 		summary.ImportedFiles++
@@ -59,6 +59,12 @@ func importFailure(err error) (string, bool) {
 	switch {
 	case errors.Is(err, domain.ErrInvalidEPUB):
 		return "invalid_epub", false
+	case errors.Is(err, domain.ErrInvalidPDF):
+		return "invalid_pdf", false
+	case errors.Is(err, domain.ErrEncryptedPDF):
+		return "encrypted_pdf", false
+	case errors.Is(err, domain.ErrPDFParserFailure):
+		return "pdf_parser_failed", true
 	case errors.Is(err, domain.ErrImportSize):
 		return "import_size_limit", false
 	case errors.Is(err, domain.ErrSourceChanged):

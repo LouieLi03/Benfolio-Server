@@ -9,11 +9,13 @@ services:
     image: benfolio-server:local
     restart: unless-stopped
     init: true
+    mem_limit: "${BENFOLIO_MEMORY_LIMIT:-512m}"
     user: "${BENFOLIO_UID:-10001}:${BENFOLIO_GID:-10001}"
     read_only: true
     cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+    security_opt: ["no-new-privileges:true"]
     environment:
+      GOMEMLIMIT: "${BENFOLIO_GO_MEMORY_LIMIT:-384MiB}"
       BENFOLIO_SERVER_NAME: "${BENFOLIO_SERVER_NAME:-Benfolio}"
       BENFOLIO_LIBRARY_NAME: "${BENFOLIO_LIBRARY_NAME:-书库}"
       BENFOLIO_LISTEN_ADDR: ":8080"

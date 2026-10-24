@@ -17,7 +17,26 @@ var (
 const (
 	ScanDiscovery  = "discovery"
 	ScanEPUBImport = "epub_import"
+	ScanPDFImport  = "pdf_import"
+	ScanBookImport = "book_import"
 )
+
+func IsImportScan(stage string) bool {
+	return stage == ScanEPUBImport || stage == ScanPDFImport || stage == ScanBookImport
+}
+func IsScanStage(stage string) bool { return stage == ScanDiscovery || IsImportScan(stage) }
+func ScanAcceptsFormat(stage string, format Format) bool {
+	switch stage {
+	case ScanEPUBImport:
+		return format == EPUB
+	case ScanPDFImport:
+		return format == PDF
+	case ScanBookImport:
+		return format == EPUB || format == PDF
+	default:
+		return false
+	}
+}
 
 type ScanFileFailure struct {
 	RelativePath string `json:"relativePath"`
@@ -38,6 +57,7 @@ type ScanImportSummary struct {
 }
 
 type ScanProgress struct {
+	Stage          string
 	CandidateFiles int
 	Import         *ScanImportSummary
 }
@@ -70,7 +90,7 @@ type ScanQueue interface {
 	ScanTask(context.Context, string, string) (ScanTask, error)
 	ClaimScan(context.Context, string) (*ScanTask, error)
 	RecordScanProgress(context.Context, string, string, ScanProgress) error
-	FinishScan(context.Context, string, string, SourceDiscovery, *ScanImportSummary, *TaskFailure) error
+	FinishScan(context.Context, string, ScanTask, SourceDiscovery, *ScanImportSummary, *TaskFailure) error
 	RecoverScans(context.Context, string) error
 }
 

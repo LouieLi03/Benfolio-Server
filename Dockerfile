@@ -12,10 +12,19 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
     -o /out/benfolio-server ./cmd/benfolio-server
 RUN mkdir -p /out/data && chmod 700 /out/data
+RUN mkdir -p /out/licenses/dependencies \
+    && cp /usr/local/go/LICENSE /out/licenses/Go-LICENSE \
+    && cp /src/LICENSE /out/licenses/Benfolio-Server-LICENSE \
+    && cp -R /src/third_party /out/licenses/third_party \
+    && cd /go/pkg/mod \
+    && find . -type f \( -iname 'license*' -o -iname 'licence*' \
+        -o -iname 'copying*' -o -iname 'notice*' -o -iname 'copyright*' \) \
+        -exec cp --parents '{}' /out/licenses/dependencies/ \;
 
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/benfolio-server /benfolio-server
+COPY --from=build /out/licenses /licenses
 COPY --from=build --chown=10001:10001 /out/data /data
 USER 10001:10001
 ENV BENFOLIO_LISTEN_ADDR=:8080 BENFOLIO_DATA_DIR=/data BENFOLIO_BOOKS_DIR=/books

@@ -19,6 +19,7 @@ type API struct {
 	Sources          domain.SourceBrowser
 	Scans            domain.ScanService
 	Imports          domain.BookImporter
+	Originals        domain.OriginalReader
 	Owner            domain.User
 	InstanceID       string
 	ServerName       string
@@ -40,14 +41,16 @@ func (a API) Handler() http.Handler {
 	api.HandleFunc("GET /api/v1/libraries", a.libraries)
 	api.HandleFunc("GET /api/v1/libraries/{libraryID}/source-files", a.sourceFiles)
 	api.HandleFunc("POST /api/v1/libraries/{libraryID}/scan", a.startScan)
-	api.HandleFunc("POST /api/v1/libraries/{libraryID}/imports", a.importEPUB)
+	api.HandleFunc("POST /api/v1/libraries/{libraryID}/imports", a.importBook)
 	api.HandleFunc("GET /api/v1/tasks/{taskID}", a.scanTask)
 	api.HandleFunc("GET /api/v1/books", a.books)
+	api.HandleFunc("GET /api/v1/books/{bookID}", a.book)
+	api.HandleFunc("GET /api/v1/books/{bookID}/versions", a.versions)
+	api.HandleFunc("GET /api/v1/versions/{versionID}", a.version)
+	api.HandleFunc("GET /api/v1/versions/{versionID}/file", a.originalFile)
 	// Reserved routes deliberately fail instead of returning fake upload success.
 	for _, pattern := range []string{
 		"POST /api/v1/libraries",
-		"GET /api/v1/books/{bookID}", "GET /api/v1/books/{bookID}/versions",
-		"GET /api/v1/versions/{versionID}/file",
 		"GET /api/v1/versions/{versionID}/progress", "PUT /api/v1/versions/{versionID}/progress",
 		"GET /api/v1/versions/{versionID}/annotations", "PUT /api/v1/versions/{versionID}/annotations/{annotationID}",
 		"DELETE /api/v1/versions/{versionID}/annotations/{annotationID}",
@@ -95,7 +98,10 @@ func (a API) authenticate(next http.Handler) http.Handler {
 func (a API) recoverRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-			if recover() != nil {
+			if recovered := recover(); recovered != nil {
+				if recovered == http.ErrAbortHandler {
+					panic(recovered)
+				}
 				// Never log a panic value, URL query, headers or body containing user data.
 				a.Logger.Error("request_panicked", "method", r.Method)
 				writeError(w, http.StatusInternalServerError, "internal_error", "服务处理失败，请稍后重试。")
@@ -125,7 +131,9 @@ func (a API) capabilities(w http.ResponseWriter, r *http.Request) {
 			"sourceScanTasks":            a.Scans != nil,
 			"epubImport":                 a.Imports != nil,
 			"epubScanImport":             a.Scans != nil && a.Imports != nil,
-			"libraryManagement":          false, "scan": false, "download": false,
+			"pdfImport":                  a.Imports != nil,
+			"pdfScanImport":              a.Scans != nil && a.Imports != nil,
+			"libraryManagement":          false, "scan": a.Scans != nil && a.Imports != nil, "download": a.Originals != nil,
 			"progressSync": false, "annotationSync": false, "resourceTransfer": false,
 			"pdfWorkingCopy": false, "pdfExport": false, "epubAnnotationExport": false,
 			"backupRestore": false, "webReader": false, "multiUser": false,

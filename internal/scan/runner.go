@@ -26,10 +26,10 @@ func NewRunner(ctx context.Context, queue domain.ScanQueue, scanner domain.Sourc
 }
 
 func (r *Runner) StartScan(ctx context.Context, libraryID, stage string) (domain.ScanTask, bool, error) {
-	if stage != domain.ScanDiscovery && stage != domain.ScanEPUBImport {
+	if !domain.IsScanStage(stage) {
 		return domain.ScanTask{}, false, domain.ErrInvalidScanStage
 	}
-	if stage == domain.ScanEPUBImport && r.importer == nil {
+	if domain.IsImportScan(stage) && r.importer == nil {
 		return domain.ScanTask{}, false, domain.ErrScanUnavailable
 	}
 	if r.ctx.Err() != nil {
@@ -78,11 +78,11 @@ func (r *Runner) execute(task domain.ScanTask) {
 	defer cancel()
 	count := 0
 	var imported *domain.ScanImportSummary
-	if task.Stage == domain.ScanEPUBImport {
+	if domain.IsImportScan(task.Stage) {
 		imported = &domain.ScanImportSummary{Failures: []domain.ScanFileFailure{}}
 	}
 	persist := func() error {
-		return r.queue.RecordScanProgress(ctx, r.ownerID, task.ID, domain.ScanProgress{CandidateFiles: count, Import: imported})
+		return r.queue.RecordScanProgress(ctx, r.ownerID, task.ID, domain.ScanProgress{Stage: task.Stage, CandidateFiles: count, Import: imported})
 	}
 	visit := func(domain.SourceFile) error {
 		count++
@@ -93,10 +93,10 @@ func (r *Runner) execute(task domain.ScanTask) {
 	}
 	importVisit := func(file domain.SourceFile, reader domain.SourceReader) error {
 		count++
-		if err := r.importCandidate(ctx, task.LibraryID, file, reader, imported); err != nil {
+		if err := r.importCandidate(ctx, task.LibraryID, task.Stage, file, reader, imported); err != nil {
 			return err
 		}
-		if file.Format == domain.EPUB || count%128 == 0 {
+		if domain.ScanAcceptsFormat(task.Stage, file.Format) || count%128 == 0 {
 			return persist()
 		}
 		return nil
@@ -129,7 +129,7 @@ func (r *Runner) execute(task domain.ScanTask) {
 	}
 	failure := scanFailure(err, report.Complete)
 	if failure == nil && imported != nil && imported.FailedFiles > 0 {
-		failure = &domain.TaskFailure{Code: "import_errors", Message: "扫描已结束，部分 EPUB 导入未确认成功，请查看逐文件错误摘要。"}
+		failure = &domain.TaskFailure{Code: "import_errors", Message: "扫描已结束，部分书籍导入未确认成功，请查看逐文件错误摘要。"}
 	}
 	if failure == nil && imported != nil && imported.ProcessedFiles != report.CandidateFiles {
 		failure = &domain.TaskFailure{Code: "import_incomplete", Message: "发现与处理数量不一致，请检查任务统计后重新扫描。"}
@@ -138,7 +138,7 @@ func (r *Runner) execute(task domain.ScanTask) {
 	// independent context. If storage is unavailable, startup recovery handles it.
 	finishCtx, finishCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer finishCancel()
-	if err := r.queue.FinishScan(finishCtx, r.ownerID, task.ID, report, imported, failure); err != nil {
+	if err := r.queue.FinishScan(finishCtx, r.ownerID, task, report, imported, failure); err != nil {
 		r.logger.Error("scan_task_finish_failed", "task_id", task.ID)
 	}
 }

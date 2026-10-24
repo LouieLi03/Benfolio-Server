@@ -15,6 +15,7 @@ import (
 	"github.com/LouieLi03/Benfolio-Server/internal/config"
 	"github.com/LouieLi03/Benfolio-Server/internal/httpapi"
 	"github.com/LouieLi03/Benfolio-Server/internal/importer"
+	"github.com/LouieLi03/Benfolio-Server/internal/originals"
 	"github.com/LouieLi03/Benfolio-Server/internal/scan"
 	"github.com/LouieLi03/Benfolio-Server/internal/source"
 	"github.com/LouieLi03/Benfolio-Server/internal/storage"
@@ -69,6 +70,11 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer sources.Close()
+	files, err := originals.New(store, layout.Originals)
+	if err != nil {
+		return err
+	}
+	defer files.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	recoveryCtx, cancelRecovery := context.WithTimeout(ctx, 30*time.Second)
@@ -95,6 +101,7 @@ func run(logger *slog.Logger) error {
 		Sources:          sources,
 		Scans:            scans,
 		Imports:          imports,
+		Originals:        files,
 		Owner:            store.Owner,
 		InstanceID:       store.InstanceID,
 		ServerName:       cfg.ServerName,
