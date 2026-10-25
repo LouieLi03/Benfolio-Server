@@ -12,13 +12,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LouieLi03/Benfolio-Server/internal/annotation"
 	"github.com/LouieLi03/Benfolio-Server/internal/config"
+	"github.com/LouieLi03/Benfolio-Server/internal/export"
 	"github.com/LouieLi03/Benfolio-Server/internal/httpapi"
 	"github.com/LouieLi03/Benfolio-Server/internal/importer"
 	"github.com/LouieLi03/Benfolio-Server/internal/originals"
+	"github.com/LouieLi03/Benfolio-Server/internal/progress"
+	"github.com/LouieLi03/Benfolio-Server/internal/resource"
 	"github.com/LouieLi03/Benfolio-Server/internal/scan"
 	"github.com/LouieLi03/Benfolio-Server/internal/source"
 	"github.com/LouieLi03/Benfolio-Server/internal/storage"
+	"github.com/LouieLi03/Benfolio-Server/internal/workingpdf"
 )
 
 var version = "dev"
@@ -75,6 +80,21 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer files.Close()
+	resources, err := resource.New(store, layout.Root)
+	if err != nil {
+		return err
+	}
+	defer resources.Close()
+	workingPDF, err := workingpdf.New(store, files, resources, layout.Root)
+	if err != nil {
+		return err
+	}
+	defer workingPDF.Close()
+	exports, err := export.New(store, workingPDF, layout.Root)
+	if err != nil {
+		return err
+	}
+	defer exports.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	recoveryCtx, cancelRecovery := context.WithTimeout(ctx, 30*time.Second)
@@ -102,6 +122,11 @@ func run(logger *slog.Logger) error {
 		Scans:            scans,
 		Imports:          imports,
 		Originals:        files,
+		Progress:         progress.New(store),
+		Annotations:      annotation.New(store),
+		Resources:        resources,
+		WorkingPDF:       workingPDF,
+		Exports:          exports,
 		Owner:            store.Owner,
 		InstanceID:       store.InstanceID,
 		ServerName:       cfg.ServerName,

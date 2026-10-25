@@ -1,5 +1,5 @@
-// Package domain defines provider-neutral data boundaries. Reading and annotation
-// contracts are reserved for subsequent implementation; they are not API support claims.
+// Package domain defines provider-neutral data boundaries. API capabilities
+// describe which reading and annotation operations are implemented.
 package domain
 
 import (
@@ -71,11 +71,14 @@ type EPUBAnchor struct {
 	Locator json.RawMessage `json:"locator,omitempty"`
 }
 
-// PDF geometry uses unrotated crop-box points, origin at the top left. Client
-// adapters must transform display coordinates; page IDs remain stable on reorder.
+// PDF anchors declare their coordinate space. Version-local page indices and
+// normalized rectangles precede future stable page IDs and editing mappings.
 type PDFAnchor struct {
-	PageID string `json:"pageID"`
-	Rects  []Rect `json:"rects,omitempty"`
+	PageID          string     `json:"pageID,omitempty"`
+	PageIndex       *int64     `json:"pageIndex,omitempty"`
+	CoordinateSpace string     `json:"coordinateSpace,omitempty"`
+	Rects           []Rect     `json:"rects,omitempty"`
+	Quote           *TextQuote `json:"quote,omitempty"`
 }
 
 type Rect struct {
@@ -94,14 +97,20 @@ type Annotation struct {
 	Body              json.RawMessage `json:"body"`
 	Revision          int64           `json:"revision"`
 	DeletedAt         *time.Time      `json:"deletedAt,omitempty"`
+	CreatedAt         time.Time       `json:"createdAt"`
+	UpdatedAt         time.Time       `json:"updatedAt"`
+	DeviceID          string          `json:"deviceID,omitempty"`
 }
 
-// Ink is a portable draft, not serialized PKDrawing. Editing interoperability,
-// brush semantics and conversion remain to be implemented and accepted.
+// Ink is a version-bound portable stroke group. Client conversion and renderer
+// fidelity require separate acceptance; this is not serialized PKDrawing.
 type Ink struct {
-	SchemaVersion   int         `json:"schemaVersion"`
-	CoordinateSpace string      `json:"coordinateSpace"`
-	Strokes         []InkStroke `json:"strokes"`
+	SchemaVersion     int         `json:"schemaVersion"`
+	DocumentVersionID string      `json:"documentVersionID"`
+	SourceSHA256      string      `json:"sourceSHA256"`
+	PageIndex         *int64      `json:"pageIndex"`
+	CoordinateSpace   string      `json:"coordinateSpace"`
+	Strokes           []InkStroke `json:"strokes"`
 }
 
 type InkStroke struct {
@@ -124,10 +133,12 @@ type Progress struct {
 	Locator           json.RawMessage `json:"locator"`
 	Completed         bool            `json:"completed"`
 	Revision          int64           `json:"revision"`
+	DeviceID          string          `json:"deviceID,omitempty"`
+	UpdatedAt         *time.Time      `json:"updatedAt,omitempty"`
 }
 
-// Mutation IDs are scoped to a user. Future writes must check BaseRevision and
-// store the mutation receipt in the same transaction as state and change events.
+// Mutation IDs are scoped to a user. Writes must check BaseRevision and store
+// the mutation receipt in the same transaction as state and change events.
 type Mutation struct {
 	ID           string          `json:"id"`
 	DeviceID     string          `json:"deviceID"`

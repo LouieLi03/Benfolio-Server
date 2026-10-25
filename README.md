@@ -17,24 +17,37 @@
 - 书籍详情、分页版本历史与受认证保护的原件下载；按版本读取归档，支持单段 Range、HEAD 和 ETag 条件请求。
 - 健康状态、可配置的服务显示名称、服务信息、能力声明、书库/书目查询接口。
 - 原书版本、页面、进度、批注、资源、工作 PDF、变更日志、操作回执和任务的数据结构。
+- 按原书版本读取与条件保存阅读进度；修订号冲突保护、操作ID幂等回执和按Owner过滤的增量变更查询，状态/事件/回执在同一事务提交。
+- 书签、高亮、文字笔记的版本内查询、条件新增/修改、软删除；批注修订、变更事件与操作回执同事务保存，已删除记录保留且不允许旧ID复活。
+- 便携笔画资源的受认证上传/下载、原字节摘要校验、不可变归档及Owner归属；PDF手写批注引用资源，关联/状态/事件/回执同事务保存，保留历史引用。
+- 从原件和有效批注快照生成用户工作PDF，添加标准高亮/备注/Ink及外观流；保留历史副本、变更位置和操作回执，生成结果结构校验后登记，批注已变化时拒绝替换当前副本。
+- 独立PDF/Markdown导出记录与认证下载：PDF固定引用工作修订，EPUB/PDF笔记汇总绑定批注快照；文件/发布记录/回执一致登记，保留原件与旧导出。
 - 独立 Dockerfile、Compose 和配置示例。
 
-进度/笔记同步、笔迹转换、工作 PDF 保存、EPUB/PDF 导出、管理界面、备份恢复均未实现。新数据库未配置来源时书库查询返回空列表；配置有效来源后返回登记的书库，单本或批量 EPUB/PDF 导入成功后才有书目。下载针对已入库的原件，不是批注导出。未实现的业务接口返回 `501 not_implemented`。能力声明中相应项目为 `false`。Apple 客户端尚未接入此服务。
+阅读进度、文字批注、PDF手写资源/引用及工作PDF生成/读取的服务端代码已加入，尚未构建或运行验收；Apple客户端的第一方进度/批注/笔画适配尚未完成，不能据此声明跨设备阅读或笔记恢复已可用。Pencil数据转换、跨端绘制保真、客户端工作PDF/分享联动、带批注EPUB副本、管理界面、完整备份恢复均未实现；独立PDF和Markdown导出代码已加入但未运行验收。新数据库未配置来源时书库查询返回空列表；配置有效来源后返回登记的书库，单本或批量 EPUB/PDF 导入成功后才有书目。下载针对已入库的原件，不是批注导出。未实现的业务接口返回 `501 not_implemented`。能力声明中相应项目为 `false`。Apple 客户端适配在独立项目维护，书库与原件下载适配代码已加入，尚未完成联调与验收。
 
 ## 工程结构
 
 ```text
 cmd/benfolio-server/       启动、退出及容器健康探测入口
 internal/config/          环境配置和凭证文件读取
-internal/domain/          书库、版本、锚点、笔画与同步契约草案
+internal/domain/          书库、版本、进度与批注契约
 internal/httpapi/         HTTP 路由、认证、参数和错误返回
 internal/source/          受限的来源目录读取与文件发现
 internal/scan/            后台扫描任务执行与状态收尾
 internal/publication/     受限的 EPUB/PDF 元数据读取
 internal/importer/        来源快照、原书归档与导入流程
 internal/originals/       归档读取、完整摘要校验与下载并发限制
+internal/progress/        位置校验、修订前提及操作请求摘要
+internal/annotation/      文字/手写引用批注、版本锚点及操作校验
+internal/resource/        不可变笔画资源、内容校验及文件读写
+internal/workingpdf/      批注快照生成PDF、外观流与不可变历史文件
+internal/export/          固定修订PDF、Markdown笔记及导出文件发布
+internal/position/        EPUB内容位置与比例校验
+internal/syncvalue/       操作标识与原书摘要的公共校验
+internal/jsonvalue/       有界JSON归一化与重复键拒绝
 internal/localfile/       Linux/macOS 普通文件的受限打开
-internal/storage/         状态目录、SQLite、书目查询与导入事务
+internal/storage/         状态目录、SQLite、书目/进度查询及事务
 internal/storage/migrations/  内嵌迁移
 deploy/                   Compose 和环境变量示例
 ```
@@ -43,22 +56,23 @@ deploy/                   Compose 和环境变量示例
 
 ```text
 data/
-  benfolio.sqlite         元数据及后续同步记录
+  benfolio.sqlite         元数据、进度、变更记录与操作回执
   originals/              不可变原书归档
   working/                按用户/内容版本管理的工作文件
   resources/              笔迹和其他不可变资源
   staging/                尚未发布完成的暂存
+  exports/                不可变Markdown导出文件
 ```
 
 数据库使用 WAL；仅复制主数据库文件不能作为完整备份。当前按单实例、本机持久磁盘设计，不承诺多副本或网络文件系统上的共享 SQLite。来源书籍目录独立挂载为只读；启动检查最多读取一个条目名称。只读文件发现由请求或后台任务触发，受限递归列举目录和文件元数据，不读取书籍正文；显式导入读取正文并归档到独立状态目录。来源文件均不改写。
 
 ## 保存与同步边界
 
-以下是拟实现契约，不是已支持能力：
+阅读进度、文字批注与手写资源的服务端代码分别见下方对应章节，尚未运行验收；工作PDF生成代码见专节；PDF/Markdown导出代码见专节；带批注EPUB副本、客户端Pencil转换、绘制保真和完整恢复仍是后续目标：
 
 - **PDF**：保留导入原件；批注写入每个用户自己的工作 PDF，分享文件携带可见笔迹；NAS 同时保存可迁移笔画和同步记录。工作 PDF 的字节摘要与原书内容摘要分开，不能因画了一笔就把原书认作换版。写回来源路径需要后续明确的发布操作，当前只读挂载不支持写回。
 - **EPUB**：原件保留；日常按内容锚点同步高亮、书签和文字备注；导出带批注 EPUB 副本及笔记汇总。其他阅读器是否识别内嵌批注单独验证。自由手写先后置，不绑定可重排的屏幕页码。
-- **多端**：稳定的实例/用户/内容版本身份；后续以服务端修订号与操作 ID 处理条件写入、重试和删除。不同对象允许合并，同对象并发修改保留冲突。当前只有模型与表，尚无实际同步处理。
+- **多端**：已有稳定实例/用户/内容版本身份；进度及文字/手写引用批注加入修订号条件写入、操作ID重试与变更日志，批注软删除保留墓碑；手写字节按摘要独立获取。不同批注分别修订，同一批注冲突不自动覆盖；本机修改保留、冲突选择、跨端界面与重装恢复仍待客户端接入。
 - **恢复**：原件、工作文件、数据库及引用资源都属于恢复范围；尚未上传的设备离线修改不能由 NAS 恢复。当前不删除旧版和墓碑，不提供备份/恢复 API。
 
 ## 本机开发
@@ -117,10 +131,26 @@ go build -o bin/benfolio-server ./cmd/benfolio-server
 | `GET /api/v1/books/{bookID}/versions` | 版本历史，支持 limit、offset；未知书籍404 |
 | `GET /api/v1/versions/{versionID}` | 版本详情及保存的元数据，PDF 包含页数与声明版本；未知版本404 |
 | `GET /api/v1/versions/{versionID}/file` | 按版本下载归档原件，支持 HEAD、单段 Range 和条件请求 |
+| `GET /api/v1/versions/{versionID}/progress` | 当前Owner的版本进度，无记录时revision为0；未知版本404 |
+| `PUT /api/v1/versions/{versionID}/progress` | 带操作ID、原书摘要与基础修订号的条件保存 |
+| `GET /api/v1/changes?after=0&limit=50` | 当前Owner的进度及文字/手写引用批注增量变更 |
+| `GET /api/v1/versions/{versionID}/annotations?limit=50` | 批注分页列表，含删除墓碑 |
+| `GET /api/v1/versions/{versionID}/annotations/{annotationID}` | 单条批注，包括已软删除记录 |
+| `PUT /api/v1/versions/{versionID}/annotations/{annotationID}` | 条件新增或完整更新书签、高亮、文字笔记及手写资源引用 |
+| `DELETE /api/v1/versions/{versionID}/annotations/{annotationID}` | 带JSON请求体的条件软删除 |
+| `PUT /api/v1/resources/{sha256}` | 上传单个PDF笔画组JSON，按原始字节校验SHA-256 |
+| `GET /api/v1/resources/{sha256}` | 读取当前Owner笔画资源；支持HEAD、单段Range和条件请求 |
+| `GET /api/v1/versions/{versionID}/working-pdf` | 工作PDF状态、批注变更位置和是否过期；可按revision查询历史 |
+| `POST /api/v1/versions/{versionID}/working-pdf` | 基于预期批注位置及工作副本修订号显式生成 |
+| `GET /api/v1/versions/{versionID}/working-pdf/file` | 下载当前或指定revision的历史工作PDF |
+| `GET /api/v1/versions/{versionID}/export-context` | 原件摘要、当前批注序号/数量及最新工作修订 |
+| `POST /api/v1/versions/{versionID}/exports` | 显式创建固定修订PDF或笔记Markdown导出 |
+| `GET /api/v1/exports/{exportID}` | 当前Owner的不可变导出记录 |
+| `GET /api/v1/exports/{exportID}/file` | 按记录下载导出文件 |
 
 书目查询当前只按标题匹配；`format` 为 epub/pdf，`limit` 默认30、上限100，`offset` 最大1000000。返回 `items/limit/offset/hasMore`；已导入书目含 `currentVersionID`。接口和模型仍处于草案阶段。
 
-progress、annotations、working-pdf、exports、changes、resources 等路由仅作预留并返回501；尚不支持客户端上传书籍和同步。不要因路由存在而开启客户端相应入口。
+导出仅支持同步创建PDF/Markdown记录，不是后台任务；尚不支持上传书籍、覆盖上传工作PDF或带批注EPUB副本。progress、annotations、resources、working-pdf、exports与changes已接业务处理，POST libraries仍501。内置配置的annotationKinds为bookmark/highlight/note/ink，resourceMediaTypes仅含application/vnd.benfolio.ink+json、inkSchemaVersions仅含1；resourceTransfer随资源服务接线声明，inkSync须同时有资源与批注服务，epubInk仍为false。pdfWorkingCopy/pdfAnnotationMaterialization随工作PDF服务接线声明；pdfExport须有导出及工作PDF服务，notesMarkdownExport/epubNotesExport随导出服务声明，exportFormats为markdown/pdf，epubAnnotationExport仍为false。客户端必须检查具体类型与版本，不能据此启用尚未实现的Pencil转换、编辑后PDF上传或带批注EPUB副本。接口存在或能力声明均不替代构建与运行验收。
 
 书库来源目前仅通过启动配置登记；`librarySourceConfiguration=true` 表示支持此配置。`POST /api/v1/libraries` 仍返回501，`libraryManagement=false`；尚不支持通过 API 增删书库或同时配置多个来源目录。
 
@@ -182,7 +212,7 @@ progress、annotations、working-pdf、exports、changes、resources 等路由�
 
 同书库、同相对路径保持同一个 `bookID`；相同内容复用 `version.id`，内容变化新增版本并保留历史。来源恢复为已导入的旧字节时切回原版本，书目显示该版本元数据。同内容出现在不同路径时分别建书，仅复用物理归档；改名/移动尚不自动关联原书；仅改扩展名不作为格式转换处理。笔记和进度不跨版本迁移，不写入原书。归档摘要仅标识内容，不能代替书籍或用户身份。
 
-新建版本返回201，同内容重试返回200；响应包含 `bookID/version/metadata/bookCreated/versionCreated`。来源访问占用时返回429，格式无效/不支持或超出范围返回422，读取失败返回503；未知书库404、未绑定来源409。请求采用20秒上下文期限，底层I/O阻塞时不能保证期限；客户端超时或断开可能无法确认已完成的事务，可重试同一路径与内容复用版本。导入不产生同步事件；`epubImport/pdfImport` 与独立的 `download` 能力分开声明，不开启 `progressSync/annotationSync`。
+新建版本返回201，同内容重试返回200；响应包含 `bookID/version/metadata/bookCreated/versionCreated`。来源访问占用时返回429，格式无效/不支持或超出范围返回422，读取失败返回503；未知书库404、未绑定来源409。请求采用20秒上下文期限，底层I/O阻塞时不能保证期限；客户端超时或断开可能无法确认已完成的事务，可重试同一路径与内容复用版本。导入不产生同步事件；`epubImport/pdfImport` 与 `download`、`progressSync` 分开声明，不代表批注同步能力。
 
 ## PDF 元数据与解析边界
 
@@ -212,6 +242,286 @@ Compose 新增默认512m容器内存限制，以及 `GOMEMLIMIT=384MiB` 的Go软
 
 这些校验依赖应用保持归档不变，不能替代只允许受信任用户写入状态目录的部署权限。校验后由外部进程原地改写文件仍可能影响传输；客户端完整摘要检查是最终接收判断。接口不返回对象键、来源绝对路径或底层路径错误，当前不提供匿名或签名分享链接。
 
+## 阅读进度与增量变更
+
+以下为本轮新增服务端契约，未运行构建、数据库迁移或联调，Apple客户端尚未调用这些接口。现有Owner Bearer Key认证覆盖进度、冲突响应与变更查询；请求中不能指定其他用户。进度按Owner＋documentVersionID隔离，旧版可继续保存自己的位置，不自动迁移到新版，不修改原书、工作PDF或笔记。
+
+### 位置与条件写入
+
+先从书籍详情取得版本ID，再从版本详情取得原件sha256。GET进度始终返回200：无记录时为 `documentVersionID/locator:null/completed:false/revision:0`，不伪造起始位置、不写入数据库；有记录时还返回 `deviceID/updatedAt`。未知版本返回404。已读状态不会把位置重置为首页，客户端可分别提供“接着读”和“重新阅读”。
+
+PUT请求必须是单个JSON对象，Content-Type为application/json，总体不超过32 KiB，归一化后的locator不超过16 KiB，嵌套不超过32层；拒绝重复键、未知请求/载荷/位置封装/PDF字段、缺失字段与无效类型。以下示例中摘要占位符必须替换为该版本实际的64位小写sha256：
+
+```json
+{
+  "id": "b6749e19-3706-4968-b8d6-a4811513b6c1",
+  "deviceID": "reader-ipad",
+  "baseRevision": 0,
+  "payload": {
+    "sourceSHA256": "<从版本详情复制sha256>",
+    "locator": {"format":"pdf","pdf":{"pageIndex":0,"progression":0.25}},
+    "completed": false
+  }
+}
+```
+
+- id为本次操作的稳定ID，deviceID为设备安装身份；仅接受1–128个ASCII字母、数字、短横线或下划线。超时后保留同一ID及原请求，新阅读操作使用新ID。deviceID不是账号，也不参与授权。
+- baseRevision显式必填，创建时为0，后续使用最近读取的revision；取值0至9007199254740990。每次成功的新操作递增1，不比较客户端时钟，不执行“最后请求直接覆盖”。completed必须显式提供布尔值。
+- PDF使用零基pageIndex，必须小于该版本保存的PDF页数。可选progression为当前页内0–1的比例，不能代替原件页索引；尚未提供稳定页面ID和编辑后页映射。
+- EPUB locator示例为 `{"format":"epub","epub":{"href":"EPUB/chapter1.xhtml","type":"application/xhtml+xml","locations":{"progression":0.3}}}`。保留完整内容Locator及扩展字段，检查非空href/type、相对内容URI、已知progression/totalProgression范围与正整数position，不换算成屏幕页码。仅做结构校验，不保证href、CFI或摘录确实存在于书内，也不执行EPUB内容加载或重新锚定。
+- PUT成功返回200，包含progress、changeSeq和replayed。progress含该版本位置、完成状态、递增revision、deviceID及服务器UTC更新时间。changeSeq为十进制字符串；不将它当作进度revision。
+
+位置、upsert变更和操作回执在同一SQLite事务中保存；新增迁移006仅为reading_progress补充device_id，不修改001–005迁移。启动应用006后，旧版程序将因数据库版本较新拒绝打开；升级前由部署者保留完整状态目录备份。此处未实际执行迁移或部署。
+
+### 冲突与重试
+
+| 情况 | 响应与处理 |
+|---|---|
+| 两台设备基于同一revision更新 | 后提交者409 progress_conflict，响应current为当前远端位置；本次不写入进度、事件或回执。客户端须保留本机分支，不能收到409后无提示地改baseRevision再次覆盖 |
+| 相同操作ID、版本、设备、基础revision和载荷再次提交 | 返回原来提交的progress/changeSeq，replayed=true，不新增事件，不递增revision；即使其他设备后来更新过，也返回原回执而非冒充最新状态 |
+| 已成功使用的操作ID对应不同请求 | 409 mutation_id_reused，不能复用ID覆盖回执 |
+| sourceSHA256与目标版本不一致 | 409 source_version_mismatch，不保存位置 |
+| 传输断开、504或500 | 写入结果可能未知，保留本机位置，使用原ID与原请求重试确认；不要直接当成失败后新建另一操作 |
+
+幂等摘要含操作种类、版本、设备、baseRevision和完整载荷；JSON对象键顺序和空白不影响摘要；不保证不同数字表示全部等价，尤其是EPUB透传字段，客户端应保留待传原操作。回执与变更均不自动清理。数据库、事件或回执写入任一步失败会回滚本次事务；事务已经提交但响应丢失时依靠回执确认。既有单实例/单数据库连接约束保留，不声明多进程并发部署支持。
+
+### 增量读取
+
+GET `/api/v1/changes?after=0&limit=50`，after为非负十进制整数，limit默认为50、上限100。返回items、nextCursor（十进制字符串）及hasMore；事件包含seq（字符串）、documentVersionID、entityType、entityID、revision、operation、payload和createdAt。进度事件的entityType为progress、entityID为版本ID、operation为upsert，payload为提交时的完整进度快照。
+
+客户端仅在应用并持久保存这一页事件后更新自己的游标；hasMore为true时用nextCursor继续。无新事件保持原游标，不跳到未返回的记录。游标需绑定服务实例和Owner；超出当前Owner历史上限返回409 change_cursor_invalid，保留本机未传修改后重新读取，不以清空本机数据恢复。游标不是数据库恢复世代标识，备份回退后的完整同步与冲突恢复流程仍待实现。
+
+变更流覆盖已提交的阅读位置，以及文字/手写引用批注的upsert/delete事件；手写事件只携带资源摘要，资源字节需另行下载。工作PDF生成也产生working_pdf事件，包含副本元数据与文件摘要，文件通过其专用接口下载。不包含书目导入、原件下载或独立资源上传，不替代书库刷新。轮询、iPhone/iPad自动接续和笔记恢复仍待客户端适配，尚无推送连接或端到端同步完成确认。
+
+代码阅读顺序：`internal/httpapi/progress.go`接收请求与返回错误 → `internal/progress/service.go`校验位置并生成操作摘要 → `internal/storage/progress.go`以事务提交位置/事件/回执；`internal/storage/changes.go`读取增量事件。HTTP层不直接写数据库，存储层不处理HTTP状态码，domain接口用于约束两层之间的输入和结果。
+
+待部署者验收：首次创建/读取、EPUB定位字段保留、PDF页码边界、版本隔离和摘要不符、并发旧revision冲突、丢响应后的原请求重试、操作ID换载荷、事件分页与游标回退，以及006迁移前后数据保留。此列表不表示这些场景已通过。
+
+## 书签、高亮与文字笔记
+
+本节为新增服务端代码契约，未运行构建、数据库迁移或联调。复用同一Owner认证、原书版本和增量变更流，不增加独立笔记服务。本节描述bookmark/highlight/note；PDF的ink资源与引用另见下一节。尚不接收图片资源、工作PDF或整份PDF覆盖上传；服务端生成的工作PDF见后文。
+
+### 读取与身份
+
+批注ID位于URL中的annotationID，由客户端创建；请求体id是每次保存/删除操作的ID，两者不能混淆。批注ID在同一Owner下保持唯一，绑定原书版本及kind后不能换版或改类型；不同用户未来仍需独立授权，目前只有Owner。
+
+GET单条和列表均包含deletedAt不为空的墓碑，不能把它重新展示成有效笔记；不存在的批注404，已软删除的批注GET仍为200。列表limit默认50、上限100，after使用上一页nextCursor（批注ID），按ID升序返回items/nextCursor/hasMore；游标必须属于当前Owner和版本，否则409 annotation_cursor_invalid。列表不是并发快照，不能因某条未出现在列表中就认定已删除。首次恢复可从changes的after=0读取保留的事件，重复事件按实体修订号处理，完整客户端恢复尚未实现。
+
+### 新增和修改
+
+PUT使用application/json，body上限64 KiB；epub或pdf锚点及body各自归一化后不超过16 KiB。与进度相同，拒绝重复键、未知请求/载荷/锚点/正文键，标识为1–128个ASCII字母、数字、短横线或下划线，baseRevision必填。新增时baseRevision=0；修改需提交完整批注及已读取的revision，不是局部PATCH。摘要占位符须替换为目标版本真实sha256。
+
+```json
+{
+  "id": "note-save-001",
+  "deviceID": "reader-ipad",
+  "baseRevision": 0,
+  "payload": {
+    "sourceSHA256": "<从版本详情复制sha256>",
+    "kind": "highlight",
+    "epub": {
+      "href": "EPUB/chapter1.xhtml",
+      "quote": {"exact":"选中的原文","prefix":"前文","suffix":"后文"}
+    },
+    "body": {"text":"自己的理解","color":"#FFF176"}
+  }
+}
+```
+
+- EPUB仅提供epub锚点，href必须是出版物内容URI。可选cfi最多4096字节，quote含exact/prefix/suffix（上限分别8192/2048/2048字节）；highlight必须有非空exact。可选locator完整保留内容定位与扩展字段，其href必须与锚点href一致。没有文本重排后的屏幕坐标，也不声称CFI或摘录已对照正文验证或自动重新锚定。
+- PDF仅提供pdf锚点，例如 `{"pageIndex":0,"coordinateSpace":"normalized-crop-unrotated-top-left","rects":[{"x":0.1,"y":0.2,"width":0.5,"height":0.04}]}`。pageIndex为该固定原件版本内的零基索引，须在保存的PDF页数范围内。矩形位于未旋转CropBox的左上原点、0–1比例空间，宽高大于0且区域不能超出页面，最多128个；提供矩形时必须显式声明上述coordinateSpace。highlight至少一个矩形；bookmark只定位页面，不接受矩形；note可定位页面或区域。无矩形时coordinateSpace可省略。
+- PDF可选quote保存客户端选文，字段及上限同EPUB；扫描页可没有摘录。服务端不提取/OCR选文、不验证文字和区域对应关系、不转换设备显示坐标；PageID、页面编辑后映射、混合旋转与裁边对齐仍待实现和验收。不接受未登记的pageID，也不借用当前页码充当稳定页ID。
+- body必须是对象，支持text和color。note需要非空text；bookmark可用text作标题或备注；highlight可用text保存评论，并可选六位RGB色值#RRGGBB（统一大写）。bookmark/note不接受color；不执行HTML或Markdown内容，展示端须按普通文字处理。自由手写不保存在text中。
+
+PUT成功返回200，含annotation/changeSeq/replayed。annotation含原书版本、类型、锚点、正文、revision、createdAt/updatedAt和deviceID；changeSeq仍为十进制字符串。同一条批注每次新操作递增修订号，其他批注独立修订，不因修改两条不同笔记产生同一对象的冲突。
+
+### 删除、冲突与重试
+
+DELETE同一批注URL也必须携带application/json请求体，例如：
+
+```json
+{"id":"note-delete-001","deviceID":"reader-ipad","baseRevision":1,"payload":{"sourceSHA256":"<该版本sha256>"}}
+```
+
+删除不接收kind、epub、pdf、body，基础修订号必须大于0；不接受空请求体的无条件删除。若代理丢弃DELETE请求体，将返回请求错误而非执行删除。未知批注404，不凭空生成墓碑；成功删除保留原锚点/笔记字节，记录deletedAt并递增revision，不删除来源文件或资源。
+
+- 陈旧修订返回409 annotation_conflict，current含当前记录（可能已删除）；不存在记录但baseRevision非0时current为null。客户端保留本机分支，不自动提高修订号重传覆盖。
+- 批注ID换版本/类型返回409 annotation_identity_mismatch；原书摘要不符返回409 source_version_mismatch。
+- 已删除记录不允许PUT复活；旧修订仍冲突，使用其最新修订操作返回410 annotation_deleted。再次用新操作ID删除同一墓碑也返回410。恢复需后续显式功能或新建另一批注ID，当前没有自动恢复接口。
+- 同一操作原请求重试返回原回执、replayed=true，不重复变更；改载荷、改目标或把进度操作ID用于批注返回409 mutation_id_reused（请求本身须先通过校验）。回执确认的是当时已提交结果，不能当成当前最新批注。
+
+所有写入以一次事务保存批注、annotation事件和操作回执。变更event的entityID为批注ID，operation为upsert/delete，payload含完整批注及删除时间；客户端可据此处理离线删除，墓碑、事件和回执均不自动清理。不同版本、不同批注不会自动合并或搬迁。写入结果不明时保留原操作与本机内容，以原ID重试。
+
+迁移007为annotations补充device_id及版本内分页索引；既有001–006迁移保持不变。未实际执行迁移，升级前保留完整状态目录备份；较旧程序会拒绝打开较新数据库。损坏记录保留并报错，不作为空列表或无批注处理。
+
+代码阅读顺序：`internal/httpapi/annotations.go` → `internal/annotation/service.go` → `internal/storage/annotations.go`。本轮抽出position/syncvalue供进度和批注复用校验，不改变已定义的进度请求结构。
+
+待部署者验收：三类批注创建/读取/修改、EPUB内容锚点与PDF矩形边界、旧revision并发、不同版本与类型隔离、更新和删除的重复请求、墓碑防复活、进度/批注操作ID复用拒绝、列表和混合事件分页，以及007迁移的数据保留。这些均未由本次开发执行。
+
+## 便携手写资源与PDF笔画引用
+
+以下为新增服务端代码，未运行构建、迁移或联调。支持PDF固定版本上的笔画组；EPUB自由手写、PencilKit转换、客户端渲染、擦除交互、编辑后稳定页映射均未实现；服务器侧工作PDF生成见下一节。资源及批注共用同一服务和Owner认证，不增加托管云或笔记旁路服务。
+
+### 资源格式与上传
+
+上传采用PUT `/api/v1/resources/{sha256}`，Content-Type必须为application/vnd.benfolio.ink+json。URL为原始请求体全部字节的64位小写SHA-256；服务端只为校验解析JSON，保存和下载均保留原始字节，不排序重写或修改笔画。JSON空白、键顺序或数字写法改变会得到另一摘要，重试必须保留原文件字节。资源不接受PKDrawing二进制、整份PDF、压缩包或任意附件。
+
+```json
+{
+  "schemaVersion": 1,
+  "documentVersionID": "<已经入库的PDF版本ID>",
+  "sourceSHA256": "<该原件的sha256>",
+  "pageIndex": 0,
+  "coordinateSpace": "normalized-crop-unrotated-top-left",
+  "strokes": [{
+    "id": "stroke-001",
+    "tool": "pen",
+    "color": "#1A1A1AFF",
+    "width": 0.002,
+    "points": [{"x":0.1,"y":0.2,"pressure":0.6,"timeMS":0}, {"x":0.2,"y":0.3,"pressure":0.7,"timeMS":12}]
+  }]
+}
+```
+
+- 示例占位符须替换为真实版本/摘要后，对实际保存的UTF-8文件计算摘要再上传；不能对解析后重编码的另一份JSON计算摘要。原书摘要与笔画资源摘要是不同身份。
+- schemaVersion固定为1；documentVersionID、sourceSHA256和pageIndex必须与已登记PDF版本相符。相同笔画跨原件版本也需显式生成新资源，不能自动套到新版。
+- x/y为未旋转CropBox左上原点的0–1比例，分别相对页面宽/高；width相对页面宽，范围大于0且不超过0.05。所有数值须有限，出界数据拒绝，不自动裁切。
+- tool只接受pen/highlighter；color为#RRGGBBAA，包括alpha；不改变原始大小写。pressure可省略，提供时为0–1；timeMS可省略，提供时为每笔内部的相对毫秒、0–86400000且不能倒退。当前不支持倾角、方位或其他私有笔刷字段。
+- 每份资源1–1000笔，每笔至少1个点，累计最多20000个点，原始请求不超过2 MiB；拒绝重复笔画ID、重复JSON键、未知字段、无效类型和超过32层嵌套，不截断笔画。更大内容需由客户端拆成独立笔画组及批注。
+
+服务先在有界内存中校验摘要、格式和版本，再在状态目录staging写入独立暂存文件并同步，以硬链接发布为只读 `resources/<摘要前两位>/<摘要>.ink.json`。已有文件重新校验，冲突返回409，不覆盖、不自动修复。资源、staging需位于支持硬链接和目录同步的同一受信任本机文件系统，两个目录拒绝显式符号链接，不支持跨挂载原子发布。
+
+文件完整发布后，以一次数据库事务登记资源、版本/页元数据和Owner归属；新登记返回201，当前Owner已有相同登记返回200且reused=true。重复上传不产生笔记变更事件。数据库失败可能留下未引用的完整文件，强制中断也可能留下暂存；只尝试清理本次操作自己的暂存，不自动清理其他文件、旧资源或用户数据。
+
+### 关联、修改与删除
+
+资源上传成功后，用原有批注PUT接口提交kind=ink。pdf锚点只接收pageIndex（coordinateSpace可按既有规则省略），不带文字摘录或矩形；body仅含resourceSHA256。例如：
+
+```json
+{
+  "id":"ink-save-001", "deviceID":"reader-ipad", "baseRevision":0,
+  "payload": {
+    "sourceSHA256":"<原书sha256>", "kind":"ink",
+    "pdf":{"pageIndex":0},
+    "body":{"resourceSHA256":"<已上传笔画资源的sha256>"}
+  }
+}
+```
+
+批注事务检查资源归当前Owner、原书版本、原件摘要和页索引是否一致；缺少可访问登记返回404，版本/页不符409。批注状态、资源关联、变更和操作回执在同一事务提交。登记检查不在该数据库事务内重读文件，依赖应用不改写/删除已发布资源；外部删改状态文件时资源下载会失败，不把笔画登记成功当作已完成工作PDF生成或端到端恢复。
+
+编辑笔画组时先上传一份新资源，再以当前批注revision及新操作ID更新引用；旧文件及历史关联不删除。擦除后的非空笔画组同样生成新资源；清空整组通过批注DELETE软删除，不能上传空笔画组。不同批注分别修订，同一组并发编辑返回冲突，不执行逐点合并或笔画级CRDT。软删除和防复活规则沿用上一节，删除不回收资源。
+
+变更流的ink批注payload只包含页面锚点与资源摘要；接收端应用修订并获取对应资源，实际下载、校验、解码和本机保存完成后才能报告笔画已可用。上传资源成功、提交批注成功、另一设备收到事件和工作PDF生成是不同阶段；客户端离线队列及同步完成状态尚未接入。
+
+### 下载与存储边界
+
+GET `/api/v1/resources/{sha256}`要求Owner Key及资源归属，未登记或非当前用户可访问的摘要404，不枚举磁盘孤立文件。发送前核对对象键、普通文件身份、大小与完整摘要；损坏返回409，缺失或不可读返回503。服务将已验证的有界字节缓冲用于本次发送，不在校验后重新打开文件。响应为原始JSON附件，含SHA-256 ETag，支持HEAD、单段Range和条件请求；多Range或超过256字节的Range头返回400，HEAD和304也先认证并校验。
+
+上传/下载合计最多2个在途操作，含接收、校验、发布和发送，超出返回429及2秒重试提示。每次资源请求使用20秒上下文；内置HTTP读超时15秒、写超时30秒，代理可能采用更短期限，底层文件系统阻塞的取消仍是协作式。传输中断不追加JSON；客户端完成下载后须核对全部字节摘要，分段不能作为独立完整资源使用。
+
+迁移008新增ink_resources和resource_owners，不修改001–007；已有未授权资源行不自动授予访问权。annotation_resources保留当前及历史引用，暂不提供资源删除、配额或垃圾回收。恢复须同时保留数据库、原件、资源及其他状态目录；仅备份笔记JSON不能恢复全部笔画。
+
+代码阅读顺序：`internal/httpapi/resources.go` → `internal/resource/ink.go`与`internal/resource/service.go` → `internal/storage/resources.go`；资源引用继续走批注事务。待部署者验收：原字节摘要和格式边界、重复上传/并发、越界笔画、错误版本或页、用户归属、资源关联冲突与重试、下载/HEAD/Range、文件缺失损坏、008迁移和中断后重试。以上场景未由本次开发运行。
+
+## 工作PDF生成与历史副本
+
+本节为新增服务端代码，未运行构建、迁移、实际PDF生成或查看器验收。工作PDF由服务端从不可变原件和已提交批注重建，不接受外部整份PDF覆盖上传。每次读取同一Owner、原书版本、工作副本修订及批注变更位置，原件、可编辑笔画和旧工作文件均保留。
+
+### 状态与显式生成
+
+先GET `/api/v1/versions/{versionID}/working-pdf`。无副本时返回200、available=false、revision=0、stale=true；包含sourceSHA256、sourceByteSize及latestAnnotationSeq（字符串），不伪造文件。已有副本返回fileSHA256/byteSize/materializedChangeSeq、updatedAt、deviceID和annotationCount，并提供latestRevision。annotationCount统计写入PDF的源批注数，不计书签，一组多笔手写仍计一条。stale仅比较当前批注变更位置与该副本生成位置；只读状态不触发生成、不检测文件是否仍存在或完整。
+
+POST同一路径，使用application/json，请求体上限8192字节，拒绝重复键、未知字段和缺失字段。例如：
+
+```json
+{
+  "id":"working-build-001", "deviceID":"reader-ipad", "baseRevision":0,
+  "sourceSHA256":"<该原件sha256>", "annotationSeq":"<状态接口的latestAnnotationSeq>"
+}
+```
+
+baseRevision为当前工作副本revision，不是某条批注revision；annotationSeq必须是十进制字符串。两者及原件摘要须与一致性快照相符。服务端读取该版本所有有效批注，生成后在最终事务内再次检查修订和批注位置；期间新增、修改或删除批注会返回409 working_pdf_conflict，不替换当前副本，不悄悄把请求改成“基于最新数据”。
+
+成功返回200，含workingPDF/changeSeq/replayed。工作副本修订递增，materializedChangeSeq记录本次批注快照的全局事件序号；它不是工作PDF自身事件的序号。只更新阅读进度不会使工作PDF过期。生成后新增批注将使状态stale=true，不自动覆盖用户正在使用的副本。
+
+操作ID与进度、批注共用回执空间；原操作重试先查回执，不重复生成。更换目标、参数或复用其他操作的ID返回409 mutation_id_reused。旧回执确认当时提交结果，不代表当前最新状态或文件仍可读取；超时、断开或500后保留原请求，以原ID重试确认。当前只支持显式同步生成，不是后台队列任务。
+
+### PDF内容与可编辑数据
+
+- 每次从原件重建，不从上一份工作PDF继续叠加。NAS来源与归档原件不改写；来源PDF已有批注保留，删除本系统笔记不会删除来源原生批注。书签仍为NAS记录，不转换为PDF目录。
+- 文字高亮写入Highlight及QuadPoints，文字备注写入Text便签和Contents；中文内容保存在PDF文字备注中，显示方式由查看器决定，不在页面上安装字体绘制整段备注。
+- 每笔手写生成Ink/InkList及显式AP外观流，坐标从未旋转CropBox的左上比例空间转换到PDF用户坐标。支持页旋转的坐标约定，实际混合页型、裁边和不同查看器效果仍待验收。高亮及笔迹颜色、透明度通过外观流表示。
+- 首版外观使用每笔固定线宽和圆头，单点生成圆点；压力和时间不改变这份PDF外观，但完整保留在原始笔画资源中。PDF第三方重新编辑/重建外观是否保留同样效果未验证，可编辑主数据仍是批注和便携资源，不能仅用下载的PDF替代完整备份。
+- 有效批注全部处理，无法处理时整次失败，不只写入部分笔记后宣告完成。生成后重新校验PDF结构和页数，再发布文件；结构校验不等同于每页渲染、文本可见性或视觉保真已通过。
+
+初始范围：未加密、无已识别签名/只追加限制的PDF，原件不超过32 MiB及1000页，每次最多1000条有效批注（含书签）、20000个生成的PDF批注对象。累计笔画资源不超过16 MiB、笔画不超过20000、点不超过200000，输出不超过128 MiB。页面需有有限有效MediaBox/CropBox，CropBox在MediaBox内、旋转为90度整数倍、宽高不超过20000用户单位；转换后线宽小于0.01或矩形宽高小于0.000001用户单位暂拒绝。超过范围返回422，不截断、删除或覆盖原件和旧工作副本。原书阅读/下载原有范围不受此生成限制影响。
+
+PDF使用固定pdfcpu v0.16.3的独立离线配置，带已有对象/流/递归资源限制，不加载用户字体或外部资源；仅重写派生文件。加入新外观时将有效PDF版本至少提升至1.7。常规错误或意外解析/写入panic均不更新工作副本，进程内存耗尽等致命运行错误不属于可恢复异常；资源限制和容器设置仍需NAS实测。
+
+### 登记、变更与下载
+
+输出先写入独立staging文件，重新校验、计算摘要并同步后以不覆盖硬链接发布为 `working/<摘要前两位>/<摘要>.pdf`。文件已存在时核对完整摘要与大小。随后以一次事务登记PDF资源及Owner、历史版本、当前副本、working_pdf事件和操作回执。数据库失败或批注冲突可留下未引用的完整文件，不自动清理；本次暂存尽力删除，不删除其他用户工作。
+
+工作文件不通过仅接收笔画JSON的resources端点下载。GET `/api/v1/versions/{versionID}/working-pdf/file`读取当前副本；可用 `?revision=1`读取保留的历史修订。状态接口同样支持revision，历史副本的stale仍按当前批注位置计算。未知历史修订或未生成文件404，磁盘缺失503，完整性异常409；不回退成原件或其他版本。
+
+下载需Owner Key，发送前校验对象键、普通文件身份、大小和完整摘要。响应application/pdf附件、SHA-256 ETag，支持HEAD、单段Range和条件请求；提供X-Benfolio-Working-Revision、X-Benfolio-Materialized-Seq、X-Benfolio-Working-Stale。状态和stale是读取时的快照，之后笔记仍可能更新；下载方必须核对完整字节摘要，不将旧副本当作覆盖上传入口。
+
+同时最多1个生成和2个工作PDF下载。生成使用90秒上下文、内置响应写期限100秒；下载总上下文与内置响应写期限5分钟，代理可能更短，文件系统及解析取消仍为协作式。超时不等于未提交，重试遵循操作回执。下载期间外部进程改写状态文件仍可能影响流，部署须限制工作目录写权限；应用不会原地改写已发布文件。
+
+迁移009新增working_pdf_history及按用户/版本/类型查变更位置的索引，001–008保持不变；原有pdf_working_copies作当前指针，resources登记派生PDF，旧文件和历史均不自动清理。working_pdf事件只含副本元数据，客户端需按版本/修订下载文件；App尚未接入。pdfWorkingCopy/pdfAnnotationMaterialization为服务端能力，独立导出已另有PDF/Markdown记录和下载接口，不代表App分享界面或完整可编辑备份已实现。
+
+代码阅读顺序：`internal/httpapi/working_pdf.go` → `internal/workingpdf/service.go`与`render.go` → `internal/storage/working_pdf.go`。待部署者验收：无批注原件副本、中文备注/高亮/单点及连续笔画、旋转与裁边、来源原生批注保留、删除后的重新生成、混合事件/旧副本过期、生成期间批注变化、重复操作、文件及资源损坏、历史下载/Range，以及009迁移与中断恢复。所有这些仍待实际执行。
+
+## 独立PDF和Markdown导出
+
+本节为新增服务端代码，未构建、执行迁移、生成真实导出文件或做外部查看器验收。导出记录及文件仅当前Owner可访问，不创建匿名分享链接，也不修改原书、笔画资源或已有工作副本。当前格式为pdf/markdown；不把Markdown称为带批注EPUB或完整恢复备份。
+
+### 创建与请求快照
+
+先GET `/api/v1/versions/{versionID}/export-context`，读取sourceSHA256、bookFormat、latestAnnotationSeq、activeAnnotationCount和latestWorkingRevision；这是只读元数据快照，不生成文件或验证磁盘文件。创建使用POST `/api/v1/versions/{versionID}/exports`，application/json、上限8192字节，拒绝重复键、未知字段及无效类型。
+
+Markdown请求示例（替换摘要和序号占位符）：
+
+```json
+{"id":"notes-export-001","deviceID":"reader-ipad","format":"markdown","sourceSHA256":"<原件sha256>","annotationSeq":"<latestAnnotationSeq>"}
+```
+
+PDF请求另须显式提供正整数workingRevision；annotationSeq须使用这一修订的materializedChangeSeq，不是工作PDF自身事件序号或当前进度修订：
+
+```json
+{"id":"pdf-export-001","deviceID":"reader-ipad","format":"pdf","sourceSHA256":"<原件sha256>","annotationSeq":"<选定副本的materializedChangeSeq>","workingRevision":1}
+```
+
+- id同时作为本次操作ID与导出ID，同一Owner内不可变；与进度/批注/工作PDF操作共用回执ID空间。deviceID和id使用既有1–128个ASCII字母、数字、短横线或下划线规则。
+- Markdown使用一致性事务读取该原件版本的标题、作者、全部有效批注和变更位置，最终登记时再次检查原件摘要与批注序号。期间笔记变化返回409 export_snapshot_conflict，不混合新旧内容，不截断笔记；新快照用新操作ID明确请求。
+- PDF必须已有所选工作修订，缺少则404，不隐式生成、不回退成无批注原件。可以显式选择保留的旧修订；记录的annotationSeq固定到这一副本，staleAtCreation表明创建当时是否已有更新的批注。之后笔记更新不改写已发布导出。
+- 创建完成返回201，含export/replayed；相同ID和相同规范化请求重试返回原记录、200及replayed=true，不重新发布。相同ID换参数/目标或复用其他操作ID返回409 mutation_id_reused。超时、断开或500时创建结果可能未知，保留原请求并以原ID确认。
+
+当前为显式同步创建，不返回虚构的排队/后台成功状态。PDF请求固定修订后只校验并复用对应文件，不再次重写PDF。Markdown不接受非零workingRevision；其快照与PDF工作修订互相独立。
+
+### Markdown内容
+
+汇总包含该版本书名/作者、格式、原件版本/摘要、批注快照、导出时间，以及批注ID/修订/时间、位置、摘录和文字备注。EPUB使用内容href/CFI，PDF使用原件页索引及一基阅读提示，不冒充文档印刷页码。只导出NAS管理的有效批注，不从来源文件提取已有原生批注或执行OCR，也不包含删除墓碑、阅读进度或整份定位JSON。
+
+手写只列页面和资源摘要，不把笔画字节嵌入Markdown；原书、笔画资源及可编辑状态须另行保留。文件开头明确注明不具备完整恢复能力。用户标题、摘录和备注按字面文字转义HTML及Markdown控制符，不生成远程图片、脚本或可执行嵌入。无有效批注时明确写出空快照。
+
+每次最多1000条有效批注，生成文件最多16 MiB，超出返回422 export_limit并拒绝整次发布，不截断。PDF导出沿用已生成副本的范围；annotationCount在Markdown中计全部有效批注，在PDF中沿用工作副本写入的源批注数（不计书签）。带批注EPUB书籍副本和包含原件/资源的可编辑导出包仍待实现。
+
+### 记录、文件与下载
+
+GET `/api/v1/exports/{exportID}`读取固定记录，GET `/api/v1/exports/{exportID}/file`下载。记录含seq（字符串）、documentVersionID/sourceSHA256、书籍格式和导出格式、fileSHA256/byteSize、annotationSeq、可选workingRevision、annotationCount、staleAtCreation、deviceID和createdAt。staleAtCreation仅描述创建时，不保证以后仍为最新；元数据读取不检测文件存在性。
+
+Markdown先发布只读 `exports/<摘要前两位>/<摘要>.md`，完整校验/同步后登记；PDF记录引用选定工作文件，不复制或覆盖字节。资源归属、不可变导出记录/发布序号和操作回执同事务提交。export_records的追加行同时作为导出发布事件，其seq是独立命名空间，不是changes游标；导出不进入阅读变更流，不使笔记或工作PDF过期。
+
+下载核对当前Owner、记录绑定及文件身份/大小/完整SHA-256，缺失503、摘要或记录冲突409、无记录或其他Owner记录404，不回退到原件或最新副本。响应PDF或UTF-8 Markdown附件，含SHA-256 ETag，支持HEAD、单段Range和条件请求，提供X-Benfolio-Export-Seq与X-Benfolio-Annotation-Seq。文件名使用摘要，不把私有宿主路径放入记录或下载头。
+
+最多1个创建和2个导出下载，PDF还受工作PDF下载并发限制；超出429及2秒重试提示。创建30秒上下文、内置写期限40秒，下载上下文及内置写期限5分钟，代理可能更短；I/O取消仍为协作式。大文件校验和格式兼容性仍待NAS实测。旧记录、文件、历史工作副本及孤立完整文件不自动清理；只尽力移除本次未发布暂存，现阶段没有导出删除/过期任务。
+
+迁移010新增export_records及索引，001–009保持不变；新增状态子目录exports，和staging须在支持硬链接/目录同步的同一本机文件系统，拒绝目录显式符号链接。尚未运行迁移或部署。pdfExport、notesMarkdownExport、epubNotesExport表示对应服务端实现接线；epubAnnotationExport及backupRestore仍false，App导出/分享界面未接入。
+
+代码阅读顺序：`internal/httpapi/exports.go` → `internal/export/service.go`、`markdown.go`和`files.go` → `internal/storage/exports.go`。待部署者验收：EPUB/PDF汇总与字面转义、空快照、批注变化冲突、旧工作修订固定、重试/ID冲突、跨Owner访问、损坏/缺失文件、HEAD/Range，以及010迁移与中断重试；这些均未由本次开发执行。
+
 ## NAS 部署准备
 
 Compose 构建上下文为本仓库根目录。暂无预构建镜像，从源码构建的配置步骤如下：
@@ -229,7 +539,7 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
 
 ## 开发路线
 
-来源配置、书库登记、受限预览、文件发现任务、单本及后台批量 EPUB/PDF 解析入库、版本查询与原件下载代码已加入，待构建与运行验收。接下来：第一方客户端接入与进度接续 → 文字批注及中立笔画同步 → 工作 PDF、导出、管理与备份恢复。
+来源配置、书库登记、受限预览、文件发现任务、单本及后台批量 EPUB/PDF 解析入库、版本查询与原件下载代码已加入，待构建与运行验收。服务端版本进度、文字/手写引用批注、笔画资源、删除墓碑、工作PDF生成/历史下载与增量变更代码已加入，仍待构建、迁移与运行验收。接下来：第一方客户端进度/批注/笔画转换及跨设备接续 → 带批注EPUB副本 → 管理与完整备份恢复。
 
 NAS资源占用、多架构兼容性、多设备同步与恢复仍待验证。
 

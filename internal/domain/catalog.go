@@ -16,8 +16,8 @@ type BookPage struct {
 	HasMore bool   `json:"hasMore"`
 }
 
-// Only catalog reads are wired in the scaffold. Sync writes must not be added
-// through this interface without user identity and revision preconditions.
+// Catalog provides immutable-version and book reads. Mutations use separate
+// interfaces with user identity and revision preconditions.
 type Catalog interface {
 	Libraries(context.Context) ([]Library, error)
 	Books(context.Context, BookQuery) (BookPage, error)

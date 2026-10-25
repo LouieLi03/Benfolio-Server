@@ -20,6 +20,11 @@ type API struct {
 	Scans            domain.ScanService
 	Imports          domain.BookImporter
 	Originals        domain.OriginalReader
+	Progress         domain.ProgressService
+	Annotations      domain.AnnotationService
+	Resources        domain.ResourceService
+	WorkingPDF       domain.WorkingPDFService
+	Exports          domain.ExportService
 	Owner            domain.User
 	InstanceID       string
 	ServerName       string
@@ -48,15 +53,25 @@ func (a API) Handler() http.Handler {
 	api.HandleFunc("GET /api/v1/books/{bookID}/versions", a.versions)
 	api.HandleFunc("GET /api/v1/versions/{versionID}", a.version)
 	api.HandleFunc("GET /api/v1/versions/{versionID}/file", a.originalFile)
+	api.HandleFunc("GET /api/v1/versions/{versionID}/progress", a.getProgress)
+	api.HandleFunc("PUT /api/v1/versions/{versionID}/progress", a.putProgress)
+	api.HandleFunc("GET /api/v1/changes", a.changes)
+	api.HandleFunc("GET /api/v1/versions/{versionID}/annotations", a.listAnnotations)
+	api.HandleFunc("GET /api/v1/versions/{versionID}/annotations/{annotationID}", a.getAnnotation)
+	api.HandleFunc("PUT /api/v1/versions/{versionID}/annotations/{annotationID}", a.putAnnotation)
+	api.HandleFunc("DELETE /api/v1/versions/{versionID}/annotations/{annotationID}", a.deleteAnnotation)
+	api.HandleFunc("PUT /api/v1/resources/{sha256}", a.putResource)
+	api.HandleFunc("GET /api/v1/resources/{sha256}", a.getResource)
+	api.HandleFunc("GET /api/v1/versions/{versionID}/working-pdf", a.workingPDFStatus)
+	api.HandleFunc("POST /api/v1/versions/{versionID}/working-pdf", a.buildWorkingPDF)
+	api.HandleFunc("GET /api/v1/versions/{versionID}/working-pdf/file", a.workingPDFFile)
+	api.HandleFunc("POST /api/v1/versions/{versionID}/exports", a.createExport)
+	api.HandleFunc("GET /api/v1/versions/{versionID}/export-context", a.exportContext)
+	api.HandleFunc("GET /api/v1/exports/{exportID}", a.getExport)
+	api.HandleFunc("GET /api/v1/exports/{exportID}/file", a.exportFile)
 	// Reserved routes deliberately fail instead of returning fake upload success.
 	for _, pattern := range []string{
 		"POST /api/v1/libraries",
-		"GET /api/v1/versions/{versionID}/progress", "PUT /api/v1/versions/{versionID}/progress",
-		"GET /api/v1/versions/{versionID}/annotations", "PUT /api/v1/versions/{versionID}/annotations/{annotationID}",
-		"DELETE /api/v1/versions/{versionID}/annotations/{annotationID}",
-		"GET /api/v1/versions/{versionID}/working-pdf",
-		"POST /api/v1/versions/{versionID}/exports", "GET /api/v1/changes",
-		"PUT /api/v1/resources/{sha256}", "GET /api/v1/resources/{sha256}",
 	} {
 		api.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotImplemented, "not_implemented", "此能力尚未实现，未保存或同步任何数据。")
@@ -122,8 +137,32 @@ func (a API) serverInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a API) capabilities(w http.ResponseWriter, r *http.Request) {
+	annotationKinds := []string{}
+	if a.Annotations != nil {
+		annotationKinds = []string{"bookmark", "highlight", "note"}
+		if a.Resources != nil {
+			annotationKinds = append(annotationKinds, "ink")
+		}
+	}
+	resourceTypes := []string{}
+	inkVersions := []int{}
+	if a.Resources != nil {
+		resourceTypes = []string{domain.InkMediaType}
+		inkVersions = []int{1}
+	}
+	exportFormats := []string{}
+	if a.Exports != nil {
+		exportFormats = []string{"markdown"}
+		if a.WorkingPDF != nil {
+			exportFormats = append(exportFormats, "pdf")
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"protocolVersion": 1,
+		"protocolVersion":    1,
+		"annotationKinds":    annotationKinds,
+		"resourceMediaTypes": resourceTypes,
+		"inkSchemaVersions":  inkVersions,
+		"exportFormats":      exportFormats,
 		"available": map[string]bool{
 			"serverIdentity": true, "singleOwnerAPIKey": true, "catalogRead": true,
 			"librarySourceConfiguration": true,
@@ -134,8 +173,13 @@ func (a API) capabilities(w http.ResponseWriter, r *http.Request) {
 			"pdfImport":                  a.Imports != nil,
 			"pdfScanImport":              a.Scans != nil && a.Imports != nil,
 			"libraryManagement":          false, "scan": a.Scans != nil && a.Imports != nil, "download": a.Originals != nil,
-			"progressSync": false, "annotationSync": false, "resourceTransfer": false,
-			"pdfWorkingCopy": false, "pdfExport": false, "epubAnnotationExport": false,
+			"progressSync": a.Progress != nil, "changeFeed": a.Progress != nil,
+			"annotationSync": a.Annotations != nil, "textAnnotations": a.Annotations != nil,
+			"inkSync": a.Resources != nil && a.Annotations != nil, "resourceTransfer": a.Resources != nil,
+			"epubInk":        false,
+			"pdfWorkingCopy": a.WorkingPDF != nil, "pdfAnnotationMaterialization": a.WorkingPDF != nil,
+			"pdfExport": a.Exports != nil && a.WorkingPDF != nil, "notesMarkdownExport": a.Exports != nil,
+			"epubNotesExport": a.Exports != nil, "epubAnnotationExport": false,
 			"backupRestore": false, "webReader": false, "multiUser": false,
 		},
 	})
